@@ -1,0 +1,7 @@
+{
+  "variants": {
+    "": {
+      "model": "blockcleaner:block/cleaner_block"
+    }
+  }
+}
