@@ -1,7 +1,8 @@
 {
   "variants": {
-    "": {
-      "model": "blockcleaner:block/cleaner_block"
-    }
+    "facing=north": { "model": "blockcleaner:block/cleaner_block", "y": 0 },
+    "facing=east": { "model": "blockcleaner:block/cleaner_block", "y": 90 },
+    "facing=south": { "model": "blockcleaner:block/cleaner_block", "y": 180 },
+    "facing=west": { "model": "blockcleaner:block/cleaner_block", "y": 270 }
   }
 }

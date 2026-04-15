@@ -322,7 +322,9 @@ public class CleanerBlockEntity extends BlockEntity implements NamedScreenHandle
 
     private List<Inventory> collectSideInventories(boolean leftInput) {
         Direction facing = getCachedState().get(CleanerBlock.FACING);
-        Direction side = leftInput ? facing.rotateYCounterclockwise() : facing.rotateYClockwise();
+        // Keep input/output aligned to player perspective while facing the machine front:
+        // left side is input, right side is output.
+        Direction side = leftInput ? facing.rotateYClockwise() : facing.rotateYCounterclockwise();
         BlockPos start = pos.offset(side);
         return collectConnectedInventories(start);
     }

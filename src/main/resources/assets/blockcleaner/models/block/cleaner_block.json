@@ -1,6 +1,11 @@
 {
-  "parent": "minecraft:block/cube_all",
+  "parent": "minecraft:block/cube",
   "textures": {
-    "all": "minecraft:block/iron_block"
+    "up": "blockcleaner:block/cleaner_top",
+    "down": "blockcleaner:block/cleaner_bottom",
+    "north": "blockcleaner:block/cleaner_front",
+    "south": "blockcleaner:block/cleaner_back",
+    "west": "blockcleaner:block/cleaner_left",
+    "east": "blockcleaner:block/cleaner_right"
   }
 }

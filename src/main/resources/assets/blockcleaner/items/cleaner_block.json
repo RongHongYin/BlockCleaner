@@ -1,0 +1,6 @@
+{
+  "model": {
+    "type": "minecraft:model",
+    "model": "blockcleaner:item/cleaner_block"
+  }
+}
