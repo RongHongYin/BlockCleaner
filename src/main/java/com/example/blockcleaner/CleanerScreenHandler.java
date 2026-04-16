@@ -12,7 +12,7 @@ public class CleanerScreenHandler extends ScreenHandler {
     private final PropertyDelegate properties;
 
     public CleanerScreenHandler(int syncId, PlayerInventory inventory) {
-        this(syncId, inventory, null, new ArrayPropertyDelegate(7));
+        this(syncId, inventory, null, new ArrayPropertyDelegate(8));
     }
 
     public CleanerScreenHandler(int syncId, PlayerInventory inventory, CleanerBlockEntity blockEntity, PropertyDelegate properties) {
@@ -79,5 +79,9 @@ public class CleanerScreenHandler extends ScreenHandler {
 
     public int getTargetY() {
         return properties.get(3);
+    }
+
+    public boolean shouldKeepOneDurability() {
+        return properties.get(7) == 1;
     }
 }

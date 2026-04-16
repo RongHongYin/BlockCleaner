@@ -15,7 +15,8 @@ import net.minecraft.util.Identifier;
 public final class ModBlocks {
     public static final Block CLEANER_BLOCK = registerBlock(
             "cleaner_block",
-            settings("cleaner_block").strength(50.0F, 1200.0F).requiresTool()
+            // Baseline: unenchanted diamond pickaxe mines this block in ~1s.
+            settings("cleaner_block").strength(5.0F, 1200.0F).requiresTool()
     );
 
     private ModBlocks() {

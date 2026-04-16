@@ -5,9 +5,13 @@ import com.example.blockcleaner.CleanerScreenHandler;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.ingame.HandledScreen;
 import net.minecraft.client.gui.widget.ButtonWidget;
+import net.minecraft.client.gui.widget.ClickableWidget;
 import net.minecraft.client.gui.widget.TextFieldWidget;
 import net.minecraft.entity.player.PlayerInventory;
 import net.minecraft.text.Text;
+
+import java.util.ArrayList;
+import java.util.List;
 
 public class CleanerScreen extends HandledScreen<CleanerScreenHandler> {
     private enum Page {
@@ -19,6 +23,7 @@ public class CleanerScreen extends HandledScreen<CleanerScreenHandler> {
     private ButtonWidget directionButton;
     private ButtonWidget modeButton;
     private ButtonWidget speedModeButton;
+    private ButtonWidget keepDurabilityButton;
     private ButtonWidget startStopButton;
     private ButtonWidget rangeMinusButton;
     private ButtonWidget rangePlusButton;
@@ -28,6 +33,8 @@ public class CleanerScreen extends HandledScreen<CleanerScreenHandler> {
     private TextFieldWidget targetYInput;
     private TextFieldWidget speedInput;
     private boolean suppressInputCallbacks = false;
+    private int clearScrollOffset = 0;
+    private final List<ClickableWidget> scrollWidgets = new ArrayList<>();
 
     public CleanerScreen(CleanerScreenHandler handler, PlayerInventory inventory, Text title) {
         super(handler, inventory, title);
@@ -44,6 +51,7 @@ public class CleanerScreen extends HandledScreen<CleanerScreenHandler> {
         this.directionButton = null;
         this.modeButton = null;
         this.speedModeButton = null;
+        this.keepDurabilityButton = null;
         this.startStopButton = null;
         this.rangeMinusButton = null;
         this.rangePlusButton = null;
@@ -52,6 +60,7 @@ public class CleanerScreen extends HandledScreen<CleanerScreenHandler> {
         this.rangeInput = null;
         this.targetYInput = null;
         this.speedInput = null;
+        this.scrollWidgets.clear();
         if (page == Page.MAIN) {
             initMainPage();
         } else {
@@ -60,6 +69,7 @@ public class CleanerScreen extends HandledScreen<CleanerScreenHandler> {
     }
 
     private void initMainPage() {
+        clearScrollOffset = 0;
         int x = this.x + 24;
         int y = this.y + 44;
 
@@ -74,7 +84,7 @@ public class CleanerScreen extends HandledScreen<CleanerScreenHandler> {
 
     private void initClearPage() {
         int left = this.x + 14;
-        int row = this.y + 32;
+        int row = getScrollTop() + clearScrollOffset;
         int rightEdge = this.x + this.backgroundWidth - 14;
         int buttonW = 92;
         int buttonH = 20;
@@ -88,53 +98,58 @@ public class CleanerScreen extends HandledScreen<CleanerScreenHandler> {
         int inputX = minusX - gap - inputW;
 
         // 1) 模式
-        this.modeButton = this.addDrawableChild(ButtonWidget.builder(
+        this.modeButton = addScrollable(this.addDrawableChild(ButtonWidget.builder(
                 Text.literal(handler.getMode() == CleanerBlockEntity.MODE_CREATIVE ? "创造" : "生存"),
-                b -> sendAction(8)).dimensions(mainButtonX, row, buttonW, buttonH).build());
+                b -> sendAction(8)).dimensions(mainButtonX, row, buttonW, buttonH).build()));
 
-        // 2) 方向
-        this.directionButton = this.addDrawableChild(ButtonWidget.builder(
+        // 2) 保留1耐久
+        this.keepDurabilityButton = addScrollable(this.addDrawableChild(ButtonWidget.builder(
+                Text.literal(handler.shouldKeepOneDurability() ? "是" : "否"),
+                b -> sendAction(10)).dimensions(mainButtonX, row + 28, buttonW, buttonH).build()));
+
+        // 3) 方向
+        this.directionButton = addScrollable(this.addDrawableChild(ButtonWidget.builder(
                 Text.literal(handler.getDirection() == CleanerBlockEntity.DIR_UP ? "↑" : "↓"),
                 b -> sendAction(handler.getDirection() == CleanerBlockEntity.DIR_UP ? 2 : 1))
-                .dimensions(mainButtonX, row + 28, buttonW, buttonH).build());
+                .dimensions(mainButtonX, row + 56, buttonW, buttonH).build()));
 
-        // 3) 目标Y轴（输入）
-        this.targetYInput = this.addDrawableChild(new TextFieldWidget(this.textRenderer, inputX, row + 56, inputW, buttonH, Text.literal("目标Y")));
+        // 4) 目标Y轴（输入）
+        this.targetYInput = addScrollable(this.addDrawableChild(new TextFieldWidget(this.textRenderer, inputX, row + 84, inputW, buttonH, Text.literal("目标Y"))));
         this.targetYInput.setMaxLength(6);
         this.targetYInput.setText(Integer.toString(handler.getTargetY()));
         this.targetYInput.setChangedListener(this::onTargetYChanged);
 
-        // 4) 范围（输入 + -）
-        this.rangeInput = this.addDrawableChild(new TextFieldWidget(this.textRenderer, inputX, row + 84, inputW, buttonH, Text.literal("范围")));
+        // 5) 范围（输入 + -）
+        this.rangeInput = addScrollable(this.addDrawableChild(new TextFieldWidget(this.textRenderer, inputX, row + 112, inputW, buttonH, Text.literal("范围"))));
         this.rangeInput.setMaxLength(3);
         this.rangeInput.setText(Integer.toString(handler.getRangeChunks()));
         this.rangeInput.setChangedListener(this::onRangeChanged);
 
-        this.rangeMinusButton = this.addDrawableChild(ButtonWidget.builder(Text.literal("-"),
-                b -> sendAction(4)).dimensions(minusX, row + 84, smallW, buttonH).build());
-        this.rangePlusButton = this.addDrawableChild(ButtonWidget.builder(Text.literal("+"),
-                b -> sendAction(3)).dimensions(plusX, row + 84, smallW, buttonH).build());
+        this.rangeMinusButton = addScrollable(this.addDrawableChild(ButtonWidget.builder(Text.literal("-"),
+                b -> sendAction(4)).dimensions(minusX, row + 112, smallW, buttonH).build()));
+        this.rangePlusButton = addScrollable(this.addDrawableChild(ButtonWidget.builder(Text.literal("+"),
+                b -> sendAction(3)).dimensions(plusX, row + 112, smallW, buttonH).build()));
 
-        // 5) 速度模式
-        this.speedModeButton = this.addDrawableChild(ButtonWidget.builder(
+        // 6) 速度模式
+        this.speedModeButton = addScrollable(this.addDrawableChild(ButtonWidget.builder(
                 Text.literal(handler.getSpeedMode() == CleanerBlockEntity.SPEED_FIXED ? "固定" : "原版"),
-                b -> sendAction(9)).dimensions(mainButtonX, row + 112, buttonW, buttonH).build());
+                b -> sendAction(9)).dimensions(mainButtonX, row + 140, buttonW, buttonH).build()));
 
-        // 6) 速度（输入 + -）
-        this.speedInput = this.addDrawableChild(new TextFieldWidget(this.textRenderer, inputX, row + 140, inputW, buttonH, Text.literal("速度")));
+        // 7) 速度（输入 + -）
+        this.speedInput = addScrollable(this.addDrawableChild(new TextFieldWidget(this.textRenderer, inputX, row + 168, inputW, buttonH, Text.literal("速度"))));
         this.speedInput.setMaxLength(5);
         this.speedInput.setText(Integer.toString(handler.getSpeedPerSecond()));
         this.speedInput.setChangedListener(this::onSpeedChanged);
 
-        this.speedMinusButton = this.addDrawableChild(ButtonWidget.builder(Text.literal("-"),
-                b -> sendAction(6)).dimensions(minusX, row + 140, smallW, buttonH).build());
-        this.speedPlusButton = this.addDrawableChild(ButtonWidget.builder(Text.literal("+"),
-                b -> sendAction(5)).dimensions(plusX, row + 140, smallW, buttonH).build());
+        this.speedMinusButton = addScrollable(this.addDrawableChild(ButtonWidget.builder(Text.literal("-"),
+                b -> sendAction(6)).dimensions(minusX, row + 168, smallW, buttonH).build()));
+        this.speedPlusButton = addScrollable(this.addDrawableChild(ButtonWidget.builder(Text.literal("+"),
+                b -> sendAction(5)).dimensions(plusX, row + 168, smallW, buttonH).build()));
 
         // 启动 / 返回 同一行
         int bottomButtonW = 104;
         int bottomButtonH = 24;
-        int bottomY = row + 176;
+        int bottomY = this.y + this.backgroundHeight - 34;
         int startX = rightEdge - (bottomButtonW * 2 + gap);
         int backX = rightEdge - bottomButtonW;
 
@@ -146,6 +161,8 @@ public class CleanerScreen extends HandledScreen<CleanerScreenHandler> {
                     page = Page.MAIN;
                     init();
                 }).dimensions(backX, bottomY, bottomButtonW, bottomButtonH).build());
+
+        updateScrollableVisibility();
     }
 
     @Override
@@ -181,17 +198,18 @@ public class CleanerScreen extends HandledScreen<CleanerScreenHandler> {
 
         if (page == Page.CLEAR) {
             int left = this.x + 14;
-            int row = this.y + 32;
+            int row = getScrollTop() + clearScrollOffset;
             int textColor = 0xFF202020;
 
-            context.drawText(this.textRenderer, Text.literal("模式"), left, row + 6, textColor, false);
-            context.drawText(this.textRenderer, Text.literal("方向"), left, row + 34, textColor, false);
-            context.drawText(this.textRenderer, Text.literal("目标Y"), left, row + 62, textColor, false);
-            context.drawText(this.textRenderer, Text.literal("范围"), left, row + 90, textColor, false);
-            context.drawText(this.textRenderer, Text.literal("（奇数 1-99）"), left + 24, row + 90, 0xFF565656, false);
-            context.drawText(this.textRenderer, Text.literal("速度模式"), left, row + 118, textColor, false);
-            context.drawText(this.textRenderer, Text.literal("速度"), left, row + 146, textColor, false);
-            context.drawText(this.textRenderer, Text.literal("（10 的倍数）"), left + 20, row + 146, 0xFF565656, false);
+            drawScrollLabel(context, Text.literal("模式"), left, row + 6, textColor);
+            drawScrollLabel(context, Text.literal("保留1耐久"), left, row + 34, textColor);
+            drawScrollLabel(context, Text.literal("方向"), left, row + 62, textColor);
+            drawScrollLabel(context, Text.literal("目标Y"), left, row + 90, textColor);
+            drawScrollLabel(context, Text.literal("范围"), left, row + 118, textColor);
+            drawScrollLabel(context, Text.literal("（奇数 1-99）"), left + 24, row + 118, 0xFF565656);
+            drawScrollLabel(context, Text.literal("速度模式"), left, row + 146, textColor);
+            drawScrollLabel(context, Text.literal("速度"), left, row + 174, textColor);
+            drawScrollLabel(context, Text.literal("（10 的倍数）"), left + 20, row + 174, 0xFF565656);
         }
 
         this.drawMouseoverTooltip(context, mouseX, mouseY);
@@ -221,6 +239,9 @@ public class CleanerScreen extends HandledScreen<CleanerScreenHandler> {
         }
         if (speedModeButton != null) {
             speedModeButton.setMessage(Text.literal(handler.getSpeedMode() == CleanerBlockEntity.SPEED_FIXED ? "固定" : "原版"));
+        }
+        if (keepDurabilityButton != null) {
+            keepDurabilityButton.setMessage(Text.literal(handler.shouldKeepOneDurability() ? "是" : "否"));
         }
         if (startStopButton != null) {
             startStopButton.setMessage(Text.literal(handler.isActive() ? "停止" : "启动"));
@@ -262,6 +283,7 @@ public class CleanerScreen extends HandledScreen<CleanerScreenHandler> {
                 suppressInputCallbacks = false;
             }
         }
+        updateScrollableVisibility();
     }
 
     private void sendAction(int action) {
@@ -363,6 +385,71 @@ public class CleanerScreen extends HandledScreen<CleanerScreenHandler> {
             return Integer.parseInt(text);
         } catch (Exception ignored) {
             return fallback;
+        }
+    }
+
+    @Override
+    public boolean mouseScrolled(double mouseX, double mouseY, double horizontalAmount, double verticalAmount) {
+        if (page == Page.CLEAR && isInsideScrollArea(mouseX, mouseY) && verticalAmount != 0) {
+            int oldOffset = clearScrollOffset;
+            int viewportHeight = getScrollBottom() - getScrollTop();
+            int contentHeight = 196;
+            int minOffset = Math.min(0, viewportHeight - contentHeight);
+            int step = 14;
+            clearScrollOffset += verticalAmount > 0 ? step : -step;
+            clearScrollOffset = Math.max(minOffset, Math.min(0, clearScrollOffset));
+            if (clearScrollOffset != oldOffset) {
+                init();
+                return true;
+            }
+        }
+        return super.mouseScrolled(mouseX, mouseY, horizontalAmount, verticalAmount);
+    }
+
+    private int getScrollTop() {
+        return this.y + 52;
+    }
+
+    private int getScrollBottom() {
+        return this.y + this.backgroundHeight - 44;
+    }
+
+    private boolean isInsideScrollArea(double mouseX, double mouseY) {
+        return mouseX >= this.x + 8
+                && mouseX <= this.x + this.backgroundWidth - 8
+                && mouseY >= getScrollTop()
+                && mouseY <= getScrollBottom();
+    }
+
+    private <T extends ClickableWidget> T addScrollable(T widget) {
+        this.scrollWidgets.add(widget);
+        return widget;
+    }
+
+    private void updateScrollableVisibility() {
+        if (page != Page.CLEAR) {
+            return;
+        }
+        int top = getScrollTop();
+        int bottom = getScrollBottom();
+        for (ClickableWidget widget : scrollWidgets) {
+            boolean visible = widget.getY() >= top && widget.getY() + widget.getHeight() <= bottom;
+            widget.visible = visible;
+            if (!visible) {
+                widget.active = false;
+                if (widget instanceof TextFieldWidget textField && textField.isFocused()) {
+                    this.setFocused(null);
+                }
+            }
+        }
+    }
+
+    private void drawScrollLabel(DrawContext context, Text text, int x, int y, int color) {
+        int top = getScrollTop();
+        int bottom = getScrollBottom();
+        int textBottom = y + this.textRenderer.fontHeight;
+        if (y >= top && textBottom <= bottom) {
+            context.drawText(this.textRenderer, text, x, y, color, false);
         }
     }
 }

@@ -5,7 +5,7 @@
     "down": "blockcleaner:block/cleaner_bottom",
     "north": "blockcleaner:block/cleaner_front",
     "south": "blockcleaner:block/cleaner_back",
-    "west": "blockcleaner:block/cleaner_left",
-    "east": "blockcleaner:block/cleaner_right"
+    "west": "blockcleaner:block/cleaner_right",
+    "east": "blockcleaner:block/cleaner_left"
   }
 }

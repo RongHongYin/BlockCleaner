@@ -41,6 +41,7 @@ public class CleanerBlockEntity extends BlockEntity implements NamedScreenHandle
     private int targetY = 0;
     private int speedPerSecond = 30;
     private int speedMode = SPEED_FIXED;
+    private boolean keepOneDurability = true;
     private boolean active = false;
     private int breakCooldownTicks = 0;
     private int startupFastScanTicks = 0;
@@ -61,6 +62,7 @@ public class CleanerBlockEntity extends BlockEntity implements NamedScreenHandle
                 case 4 -> speedPerSecond;
                 case 5 -> active ? 1 : 0;
                 case 6 -> speedMode;
+                case 7 -> keepOneDurability ? 1 : 0;
                 default -> 0;
             };
         }
@@ -75,6 +77,7 @@ public class CleanerBlockEntity extends BlockEntity implements NamedScreenHandle
                 case 4 -> speedPerSecond = value;
                 case 5 -> active = value == 1;
                 case 6 -> speedMode = value;
+                case 7 -> keepOneDurability = value == 1;
                 default -> {
                 }
             }
@@ -82,7 +85,7 @@ public class CleanerBlockEntity extends BlockEntity implements NamedScreenHandle
 
         @Override
         public int size() {
-            return 7;
+            return 8;
         }
     };
 
@@ -110,6 +113,7 @@ public class CleanerBlockEntity extends BlockEntity implements NamedScreenHandle
         view.putInt("targetY", targetY);
         view.putInt("speedPerSecond", speedPerSecond);
         view.putInt("speedMode", speedMode);
+        view.putBoolean("keepOneDurability", keepOneDurability);
         view.putBoolean("active", active);
     }
 
@@ -122,6 +126,7 @@ public class CleanerBlockEntity extends BlockEntity implements NamedScreenHandle
         targetY = view.getInt("targetY", pos.getY() - 1);
         speedPerSecond = Math.max(1, view.getInt("speedPerSecond", 30));
         speedMode = view.getInt("speedMode", SPEED_FIXED);
+        keepOneDurability = view.getBoolean("keepOneDurability", true);
         active = view.getBoolean("active", false);
     }
 
@@ -273,6 +278,9 @@ public class CleanerBlockEntity extends BlockEntity implements NamedScreenHandle
                     continue;
                 }
                 if (!matchesHint(stack, hint)) {
+                    continue;
+                }
+                if (keepOneDurability && stack.getDamage() >= stack.getMaxDamage() - 1) {
                     continue;
                 }
 
@@ -495,6 +503,7 @@ public class CleanerBlockEntity extends BlockEntity implements NamedScreenHandle
             case 7 -> active = !active;
             case 8 -> mode = (mode == MODE_CREATIVE) ? MODE_SURVIVAL : MODE_CREATIVE;
             case 9 -> speedMode = (speedMode == SPEED_FIXED) ? SPEED_VANILLA : SPEED_FIXED;
+            case 10 -> keepOneDurability = !keepOneDurability;
             default -> {
             }
         }
