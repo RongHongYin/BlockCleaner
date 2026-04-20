@@ -2,21 +2,32 @@ package com.example.blockcleaner.client;
 
 import com.example.blockcleaner.CleanerBlockEntity;
 import com.example.blockcleaner.CleanerScreenHandler;
+import com.example.blockcleaner.ModNetworking;
+import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
+import net.minecraft.client.gui.Click;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.ingame.HandledScreen;
 import net.minecraft.client.gui.widget.ButtonWidget;
 import net.minecraft.client.gui.widget.ClickableWidget;
 import net.minecraft.client.gui.widget.TextFieldWidget;
 import net.minecraft.entity.player.PlayerInventory;
+import net.minecraft.item.Item;
+import net.minecraft.item.ItemStack;
+import net.minecraft.registry.Registries;
 import net.minecraft.text.Text;
 
 import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
+import java.util.Set;
 
 public class CleanerScreen extends HandledScreen<CleanerScreenHandler> {
     private enum Page {
         MAIN,
-        CLEAR
+        CLEAR,
+        BLACKLIST
     }
 
     private Page page = Page.MAIN;
@@ -32,9 +43,22 @@ public class CleanerScreen extends HandledScreen<CleanerScreenHandler> {
     private TextFieldWidget rangeInput;
     private TextFieldWidget targetYInput;
     private TextFieldWidget speedInput;
+    private TextFieldWidget blacklistSearchInput;
+    private final List<ButtonWidget> leftGridButtons = new ArrayList<>();
+    private final List<ButtonWidget> rightGridButtons = new ArrayList<>();
+    private final List<Item> allFilteredItems = new ArrayList<>();
+    private final List<Item> blacklistedItemsView = new ArrayList<>();
+    private int leftScrollRow = 0;
+    private int rightScrollRow = 0;
+    private boolean draggingLeftScrollbar = false;
+    private boolean draggingRightScrollbar = false;
+    private Set<Integer> syncedBlacklistRawIds = new HashSet<>();
     private boolean suppressInputCallbacks = false;
     private int clearScrollOffset = 0;
     private final List<ClickableWidget> scrollWidgets = new ArrayList<>();
+    private static final int BLACKLIST_COLS = 5;
+    private static final int BLACKLIST_ROWS = 4;
+    private static final int BLACKLIST_CELL_SIZE = 18;
 
     public CleanerScreen(CleanerScreenHandler handler, PlayerInventory inventory, Text title) {
         super(handler, inventory, title);
@@ -60,11 +84,16 @@ public class CleanerScreen extends HandledScreen<CleanerScreenHandler> {
         this.rangeInput = null;
         this.targetYInput = null;
         this.speedInput = null;
+        this.blacklistSearchInput = null;
+        this.leftGridButtons.clear();
+        this.rightGridButtons.clear();
         this.scrollWidgets.clear();
         if (page == Page.MAIN) {
             initMainPage();
-        } else {
+        } else if (page == Page.CLEAR) {
             initClearPage();
+        } else {
+            initBlacklistPage();
         }
     }
 
@@ -147,14 +176,20 @@ public class CleanerScreen extends HandledScreen<CleanerScreenHandler> {
                 b -> sendAction(5)).dimensions(plusX, row + 168, smallW, buttonH).build()));
 
         // 启动 / 返回 同一行
-        int bottomButtonW = 104;
+        int bottomButtonW = 64;
         int bottomButtonH = 24;
         int bottomY = this.y + this.backgroundHeight - 34;
-        int startX = rightEdge - (bottomButtonW * 2 + gap);
-        int backX = rightEdge - bottomButtonW;
+        int startX = rightEdge - (bottomButtonW * 3 + gap * 2);
+        int blacklistX = startX + bottomButtonW + gap;
+        int backX = blacklistX + bottomButtonW + gap;
 
         this.startStopButton = this.addDrawableChild(ButtonWidget.builder(Text.literal(handler.isActive() ? "停止" : "启动"),
                 b -> sendAction(7)).dimensions(startX, bottomY, bottomButtonW, bottomButtonH).build());
+        this.addDrawableChild(ButtonWidget.builder(Text.literal("黑名单"),
+                b -> {
+                    page = Page.BLACKLIST;
+                    init();
+                }).dimensions(blacklistX, bottomY, bottomButtonW, bottomButtonH).build());
 
         this.addDrawableChild(ButtonWidget.builder(Text.literal("返回"),
                 b -> {
@@ -163,6 +198,63 @@ public class CleanerScreen extends HandledScreen<CleanerScreenHandler> {
                 }).dimensions(backX, bottomY, bottomButtonW, bottomButtonH).build());
 
         updateScrollableVisibility();
+    }
+
+    private void initBlacklistPage() {
+        this.syncedBlacklistRawIds = handler.getSyncedBlacklistRawIds();
+        int left = this.x + 14;
+        int right = this.x + this.backgroundWidth - 14;
+        int top = this.y + 44;
+        int inputH = 20;
+
+        this.blacklistSearchInput = this.addDrawableChild(
+                new TextFieldWidget(this.textRenderer, left, top, right - left, inputH, Text.literal("搜索物品")));
+        this.blacklistSearchInput.setMaxLength(80);
+        this.blacklistSearchInput.setChangedListener(this::onBlacklistSearchChanged);
+
+        int leftGridX = getLeftGridX();
+        int rightGridX = getRightGridX();
+        int gridY = getBlacklistGridY();
+        for (int row = 0; row < BLACKLIST_ROWS; row++) {
+            for (int col = 0; col < BLACKLIST_COLS; col++) {
+                int slot = row * BLACKLIST_COLS + col;
+                int x = leftGridX + col * BLACKLIST_CELL_SIZE;
+                int y = gridY + row * BLACKLIST_CELL_SIZE;
+                ButtonWidget cell = this.addDrawableChild(ButtonWidget.builder(Text.empty(), b -> onBlacklistGridCellClicked(slot))
+                        .dimensions(x, y, BLACKLIST_CELL_SIZE, BLACKLIST_CELL_SIZE)
+                        .build());
+                leftGridButtons.add(cell);
+            }
+        }
+        for (int row = 0; row < BLACKLIST_ROWS; row++) {
+            for (int col = 0; col < BLACKLIST_COLS; col++) {
+                int slot = row * BLACKLIST_COLS + col;
+                int x = rightGridX + col * BLACKLIST_CELL_SIZE;
+                int y = gridY + row * BLACKLIST_CELL_SIZE;
+                ButtonWidget cell = this.addDrawableChild(ButtonWidget.builder(Text.empty(), b -> onRightBlacklistGridCellClicked(slot))
+                        .dimensions(x, y, BLACKLIST_CELL_SIZE, BLACKLIST_CELL_SIZE)
+                        .build());
+                rightGridButtons.add(cell);
+            }
+        }
+        rebuildBlacklistSearchResults();
+        rebuildBlacklistedItemsView();
+
+        int bottomButtonW = 104;
+        int bottomButtonH = 24;
+        int bottomY = this.y + this.backgroundHeight - 34;
+        int gap = 8;
+        int clearX = right - (bottomButtonW * 2 + gap);
+        int backX = right - bottomButtonW;
+
+        this.addDrawableChild(ButtonWidget.builder(Text.literal("返回"),
+                b -> {
+                    page = Page.CLEAR;
+                    init();
+                }).dimensions(backX, bottomY, bottomButtonW, bottomButtonH).build());
+        this.addDrawableChild(ButtonWidget.builder(Text.literal("清空黑名单"),
+                b -> clearBlacklistFromScreen()).dimensions(clearX, bottomY, bottomButtonW, bottomButtonH).build());
+        requestBlacklistSync();
     }
 
     @Override
@@ -210,6 +302,14 @@ public class CleanerScreen extends HandledScreen<CleanerScreenHandler> {
             drawScrollLabel(context, Text.literal("速度模式"), left, row + 146, textColor);
             drawScrollLabel(context, Text.literal("速度"), left, row + 174, textColor);
             drawScrollLabel(context, Text.literal("（10 的倍数）"), left + 20, row + 174, 0xFF565656);
+        } else if (page == Page.BLACKLIST) {
+            int left = this.x + 14;
+            int top = this.y + 44;
+            int textColor = 0xFF202020;
+            context.drawText(this.textRenderer, Text.literal("左侧全部物品  ->  右侧黑名单"), left, top - 12, textColor, false);
+            context.drawText(this.textRenderer, Text.literal("已加入: " + syncedBlacklistRawIds.size()),
+                    left, top + 24, 0xFF565656, false);
+            drawBlacklistPanels(context, mouseX, mouseY);
         }
 
         this.drawMouseoverTooltip(context, mouseX, mouseY);
@@ -220,14 +320,25 @@ public class CleanerScreen extends HandledScreen<CleanerScreenHandler> {
         context.drawText(this.textRenderer, Text.literal("区块清除器"), 10, 8, 0xFF202020, false);
         if (page == Page.MAIN) {
             context.drawText(this.textRenderer, Text.literal("选择功能"), 10, 24, 0xFF202020, false);
-        } else {
+        } else if (page == Page.CLEAR) {
             context.drawText(this.textRenderer, Text.literal("清除配置"), 10, 24, 0xFF202020, false);
+        } else {
+            context.drawText(this.textRenderer, Text.literal("掉落物黑名单"), 10, 24, 0xFF202020, false);
         }
     }
 
     @Override
     protected void handledScreenTick() {
         super.handledScreenTick();
+        if (page == Page.BLACKLIST) {
+            Set<Integer> latest = handler.getSyncedBlacklistRawIds();
+            if (!latest.equals(syncedBlacklistRawIds)) {
+                syncedBlacklistRawIds = latest;
+                rebuildBlacklistedItemsView();
+                updateBlacklistGridButtonState();
+            }
+            return;
+        }
         if (page != Page.CLEAR) {
             return;
         }
@@ -403,6 +514,18 @@ public class CleanerScreen extends HandledScreen<CleanerScreenHandler> {
                 return true;
             }
         }
+        if (page == Page.BLACKLIST && verticalAmount != 0) {
+            if (isInsideLeftListArea(mouseX, mouseY) || isInsideLeftScrollbar(mouseX, mouseY)) {
+                leftScrollRow = clampScroll(leftScrollRow + (verticalAmount > 0 ? -1 : 1), getAllItemsMaxScrollRow());
+                updateBlacklistGridButtonState();
+                return true;
+            }
+            if (isInsideRightListArea(mouseX, mouseY) || isInsideRightScrollbar(mouseX, mouseY)) {
+                rightScrollRow = clampScroll(rightScrollRow + (verticalAmount > 0 ? -1 : 1), getBlacklistedMaxScrollRow());
+                updateBlacklistGridButtonState();
+                return true;
+            }
+        }
         return super.mouseScrolled(mouseX, mouseY, horizontalAmount, verticalAmount);
     }
 
@@ -451,5 +574,323 @@ public class CleanerScreen extends HandledScreen<CleanerScreenHandler> {
         if (y >= top && textBottom <= bottom) {
             context.drawText(this.textRenderer, text, x, y, color, false);
         }
+    }
+
+    private void onBlacklistSearchChanged(String text) {
+        rebuildBlacklistSearchResults();
+    }
+
+    private void rebuildBlacklistSearchResults() {
+        allFilteredItems.clear();
+        String keyword = blacklistSearchInput == null ? "" : blacklistSearchInput.getText().trim().toLowerCase(Locale.ROOT);
+        for (Item item : Registries.ITEM) {
+            int rawId = Registries.ITEM.getRawId(item);
+            if (rawId <= 0) {
+                continue;
+            }
+            String id = Registries.ITEM.getId(item).toString();
+            String name = item.getName().getString().toLowerCase(Locale.ROOT);
+            if (!keyword.isEmpty()
+                    && !id.toLowerCase(Locale.ROOT).contains(keyword)
+                    && !name.contains(keyword)) {
+                continue;
+            }
+            allFilteredItems.add(item);
+        }
+        allFilteredItems.sort(Comparator.comparing(item -> Registries.ITEM.getId(item).toString()));
+        leftScrollRow = clampScroll(leftScrollRow, getAllItemsMaxScrollRow());
+        updateBlacklistGridButtonState();
+    }
+
+    private void rebuildBlacklistedItemsView() {
+        blacklistedItemsView.clear();
+        for (Integer rawId : syncedBlacklistRawIds) {
+            Item item = Registries.ITEM.get(rawId);
+            if (item != null) {
+                blacklistedItemsView.add(item);
+            }
+        }
+        blacklistedItemsView.sort(Comparator.comparing(item -> Registries.ITEM.getId(item).toString()));
+        rightScrollRow = clampScroll(rightScrollRow, getBlacklistedMaxScrollRow());
+    }
+
+    private void clearBlacklistFromScreen() {
+        if (this.client == null || this.client.interactionManager == null) {
+            return;
+        }
+        for (Integer rawId : new ArrayList<>(syncedBlacklistRawIds)) {
+            this.client.interactionManager.clickButton(this.handler.syncId,
+                    CleanerBlockEntity.ACTION_REMOVE_BLACKLIST_BASE + rawId);
+        }
+        syncedBlacklistRawIds.clear();
+        handler.setSyncedBlacklistRawIds(syncedBlacklistRawIds);
+        rebuildBlacklistedItemsView();
+        updateBlacklistGridButtonState();
+    }
+
+    private boolean isInsideRect(double mouseX, double mouseY, int left, int top, int width, int height) {
+        int right = left + width;
+        int bottom = top + height;
+        return mouseX >= left && mouseX <= right && mouseY >= top && mouseY <= bottom;
+    }
+
+    private int getLeftGridX() {
+        return this.x + 14;
+    }
+
+    private int getRightGridX() {
+        return this.x + this.backgroundWidth - 14 - BLACKLIST_COLS * BLACKLIST_CELL_SIZE - 6;
+    }
+
+    private int getBlacklistGridY() {
+        return this.y + 84;
+    }
+
+    private int getGridPixelWidth() {
+        return BLACKLIST_COLS * BLACKLIST_CELL_SIZE;
+    }
+
+    private int getGridPixelHeight() {
+        return BLACKLIST_ROWS * BLACKLIST_CELL_SIZE;
+    }
+
+    private int getAllItemsMaxScrollRow() {
+        int totalRows = (allFilteredItems.size() + BLACKLIST_COLS - 1) / BLACKLIST_COLS;
+        return Math.max(0, totalRows - BLACKLIST_ROWS);
+    }
+
+    private int getBlacklistedMaxScrollRow() {
+        int totalRows = (blacklistedItemsView.size() + BLACKLIST_COLS - 1) / BLACKLIST_COLS;
+        return Math.max(0, totalRows - BLACKLIST_ROWS);
+    }
+
+    private int clampScroll(int value, int max) {
+        return Math.max(0, Math.min(max, value));
+    }
+
+    private boolean isInsideLeftListArea(double mouseX, double mouseY) {
+        return isInsideRect(mouseX, mouseY, getLeftGridX(), getBlacklistGridY(), getGridPixelWidth(), getGridPixelHeight());
+    }
+
+    private boolean isInsideRightListArea(double mouseX, double mouseY) {
+        return isInsideRect(mouseX, mouseY, getRightGridX(), getBlacklistGridY(), getGridPixelWidth(), getGridPixelHeight());
+    }
+
+    private int getLeftScrollbarX() {
+        return getLeftGridX() + getGridPixelWidth() + 2;
+    }
+
+    private int getRightScrollbarX() {
+        return getRightGridX() + getGridPixelWidth() + 2;
+    }
+
+    private boolean isInsideLeftScrollbar(double mouseX, double mouseY) {
+        return isInsideRect(mouseX, mouseY, getLeftScrollbarX(), getBlacklistGridY(), 6, getGridPixelHeight());
+    }
+
+    private boolean isInsideRightScrollbar(double mouseX, double mouseY) {
+        return isInsideRect(mouseX, mouseY, getRightScrollbarX(), getBlacklistGridY(), 6, getGridPixelHeight());
+    }
+
+    private void drawBlacklistPanels(DrawContext context, int mouseX, int mouseY) {
+        int leftGridX = getLeftGridX();
+        int rightGridX = getRightGridX();
+        int gridY = getBlacklistGridY();
+        int gridWidth = getGridPixelWidth();
+        int gridHeight = getGridPixelHeight();
+
+        drawItemGrid(context, mouseX, mouseY, leftGridX, gridY, allFilteredItems, leftScrollRow, true);
+        drawItemGrid(context, mouseX, mouseY, rightGridX, gridY, blacklistedItemsView, rightScrollRow, false);
+
+        int centerX = leftGridX + gridWidth + 16;
+        int centerY = gridY + gridHeight / 2 - 4;
+        context.drawText(this.textRenderer, Text.literal("=>"), centerX, centerY, 0xFF202020, false);
+
+        drawBlacklistScroller(context, getLeftScrollbarX(), gridY, gridHeight, leftScrollRow, getAllItemsMaxScrollRow());
+        drawBlacklistScroller(context, getRightScrollbarX(), gridY, gridHeight, rightScrollRow, getBlacklistedMaxScrollRow());
+    }
+
+    private void drawItemGrid(DrawContext context, int mouseX, int mouseY, int gridX, int gridY,
+                              List<Item> source, int scrollRow, boolean leftList) {
+        int gridWidth = getGridPixelWidth();
+        int gridHeight = getGridPixelHeight();
+        context.fill(gridX - 1, gridY - 1, gridX + gridWidth + 1, gridY + gridHeight + 1, 0xFF3A3A3A);
+        context.fill(gridX, gridY, gridX + gridWidth, gridY + gridHeight, 0xFF8B8B8B);
+
+        int startIndex = scrollRow * BLACKLIST_COLS;
+        int visibleCount = BLACKLIST_COLS * BLACKLIST_ROWS;
+        for (int i = 0; i < visibleCount; i++) {
+            int index = startIndex + i;
+            int col = i % BLACKLIST_COLS;
+            int row = i / BLACKLIST_COLS;
+            int cellX = gridX + col * BLACKLIST_CELL_SIZE;
+            int cellY = gridY + row * BLACKLIST_CELL_SIZE;
+
+            context.fill(cellX + 1, cellY + 1, cellX + BLACKLIST_CELL_SIZE - 1, cellY + BLACKLIST_CELL_SIZE - 1, 0xFFC6C6C6);
+            if (index >= source.size()) {
+                continue;
+            }
+
+            Item item = source.get(index);
+            int rawId = Registries.ITEM.getRawId(item);
+            boolean selected = syncedBlacklistRawIds.contains(rawId);
+            if (leftList && selected) {
+                context.fill(cellX + 1, cellY + 1, cellX + BLACKLIST_CELL_SIZE - 1, cellY + BLACKLIST_CELL_SIZE - 1, 0xAA6AA84F);
+            }
+            if (!leftList) {
+                context.fill(cellX + 1, cellY + 1, cellX + BLACKLIST_CELL_SIZE - 1, cellY + BLACKLIST_CELL_SIZE - 1, 0xAA8E5A5A);
+            }
+
+            context.drawItem(new ItemStack(item), cellX + 1, cellY + 1);
+
+            if (mouseX >= cellX && mouseX < cellX + BLACKLIST_CELL_SIZE && mouseY >= cellY && mouseY < cellY + BLACKLIST_CELL_SIZE) {
+                context.fill(cellX, cellY, cellX + BLACKLIST_CELL_SIZE, cellY + BLACKLIST_CELL_SIZE, 0x66FFFFFF);
+                context.drawTooltip(this.textRenderer,
+                        List.of(
+                                item.getName(),
+                                Text.literal(Registries.ITEM.getId(item).toString()),
+                                Text.literal(leftList ? (selected ? "已加入黑名单（点击移除）" : "未加入黑名单（点击加入）")
+                                        : "黑名单物品（点击移除）")
+                        ), mouseX, mouseY);
+            }
+        }
+    }
+
+    private void drawBlacklistScroller(DrawContext context, int x, int y, int height, int scrollRow, int maxScrollRow) {
+        context.fill(x, y, x + 6, y + height, 0xFF5C5C5C);
+        if (maxScrollRow <= 0) {
+            context.fill(x, y, x + 6, y + 15, 0xFF8A8A8A);
+            return;
+        }
+        float progress = scrollRow / (float) maxScrollRow;
+        int knobY = y + (int) ((height - 15) * progress);
+        context.fill(x, knobY, x + 6, knobY + 15, 0xFFE0E0E0);
+    }
+
+    private void toggleBlacklistItem(Item item) {
+        int rawId = Registries.ITEM.getRawId(item);
+        if (rawId <= 0 || this.client == null || this.client.interactionManager == null) {
+            return;
+        }
+        boolean selected = syncedBlacklistRawIds.contains(rawId);
+        int action = selected
+                ? CleanerBlockEntity.ACTION_REMOVE_BLACKLIST_BASE + rawId
+                : CleanerBlockEntity.ACTION_ADD_BLACKLIST_BASE + rawId;
+        this.client.interactionManager.clickButton(this.handler.syncId, action);
+        if (selected) {
+            syncedBlacklistRawIds.remove(rawId);
+        } else {
+            syncedBlacklistRawIds.add(rawId);
+        }
+        // Keep local handler cache in sync to avoid one-frame flicker
+        // before the authoritative S2C payload arrives.
+        handler.setSyncedBlacklistRawIds(syncedBlacklistRawIds);
+        rebuildBlacklistedItemsView();
+        updateBlacklistGridButtonState();
+    }
+
+    private void onBlacklistGridCellClicked(int slot) {
+        int index = leftScrollRow * BLACKLIST_COLS + slot;
+        if (index < 0 || index >= allFilteredItems.size()) {
+            return;
+        }
+        toggleBlacklistItem(allFilteredItems.get(index));
+    }
+
+    private void onRightBlacklistGridCellClicked(int slot) {
+        int index = rightScrollRow * BLACKLIST_COLS + slot;
+        if (index < 0 || index >= blacklistedItemsView.size()) {
+            return;
+        }
+        toggleBlacklistItem(blacklistedItemsView.get(index));
+    }
+
+    private void updateBlacklistGridButtonState() {
+        int leftStart = leftScrollRow * BLACKLIST_COLS;
+        for (int slot = 0; slot < leftGridButtons.size(); slot++) {
+            ButtonWidget button = leftGridButtons.get(slot);
+            int index = leftStart + slot;
+            boolean hasItem = index >= 0 && index < allFilteredItems.size();
+            button.active = hasItem;
+            button.visible = hasItem;
+            button.setMessage(Text.empty());
+        }
+        int rightStart = rightScrollRow * BLACKLIST_COLS;
+        for (int slot = 0; slot < rightGridButtons.size(); slot++) {
+            ButtonWidget button = rightGridButtons.get(slot);
+            int index = rightStart + slot;
+            boolean hasItem = index >= 0 && index < blacklistedItemsView.size();
+            button.active = hasItem;
+            button.visible = hasItem;
+            button.setMessage(Text.empty());
+        }
+    }
+
+    @Override
+    public boolean mouseClicked(Click click, boolean doubleClick) {
+        if (page == Page.BLACKLIST) {
+            double mouseX = click.x();
+            double mouseY = click.y();
+            if (isInsideLeftScrollbar(mouseX, mouseY)) {
+                draggingLeftScrollbar = true;
+                draggingRightScrollbar = false;
+                leftScrollRow = scrollByBarClick(mouseY, getBlacklistGridY(), getGridPixelHeight(), getAllItemsMaxScrollRow());
+                updateBlacklistGridButtonState();
+                return true;
+            }
+            if (isInsideRightScrollbar(mouseX, mouseY)) {
+                draggingRightScrollbar = true;
+                draggingLeftScrollbar = false;
+                rightScrollRow = scrollByBarClick(mouseY, getBlacklistGridY(), getGridPixelHeight(), getBlacklistedMaxScrollRow());
+                updateBlacklistGridButtonState();
+                return true;
+            }
+            draggingLeftScrollbar = false;
+            draggingRightScrollbar = false;
+        }
+        return super.mouseClicked(click, doubleClick);
+    }
+
+    @Override
+    public boolean mouseDragged(Click click, double deltaX, double deltaY) {
+        if (page == Page.BLACKLIST) {
+            boolean changed = false;
+            if (draggingLeftScrollbar) {
+                leftScrollRow = scrollByBarClick(click.y(), getBlacklistGridY(), getGridPixelHeight(), getAllItemsMaxScrollRow());
+                changed = true;
+            }
+            if (draggingRightScrollbar) {
+                rightScrollRow = scrollByBarClick(click.y(), getBlacklistGridY(), getGridPixelHeight(), getBlacklistedMaxScrollRow());
+                changed = true;
+            }
+            if (changed) {
+                updateBlacklistGridButtonState();
+                return true;
+            }
+        }
+        return super.mouseDragged(click, deltaX, deltaY);
+    }
+
+    @Override
+    public boolean mouseReleased(Click click) {
+        draggingLeftScrollbar = false;
+        draggingRightScrollbar = false;
+        return super.mouseReleased(click);
+    }
+
+    private int scrollByBarClick(double mouseY, int barTop, int barHeight, int maxScrollRow) {
+        if (maxScrollRow <= 0) {
+            return 0;
+        }
+        double ratio = (mouseY - barTop) / (double) Math.max(1, barHeight - 1);
+        ratio = Math.max(0.0, Math.min(1.0, ratio));
+        return (int) Math.round(ratio * maxScrollRow);
+    }
+
+    private void requestBlacklistSync() {
+        if (this.client == null || this.client.player == null) {
+            return;
+        }
+        ClientPlayNetworking.send(new ModNetworking.RequestBlacklistSyncPayload(this.handler.syncId));
     }
 }

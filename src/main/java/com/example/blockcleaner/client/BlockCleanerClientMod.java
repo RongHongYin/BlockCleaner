@@ -8,5 +8,6 @@ public class BlockCleanerClientMod implements ClientModInitializer {
     @Override
     public void onInitializeClient() {
         HandledScreens.register(ModScreenHandlers.CLEANER_SCREEN_HANDLER, CleanerScreen::new);
+        ModNetworkingClient.registerClientReceivers();
     }
 }

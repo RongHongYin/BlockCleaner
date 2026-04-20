@@ -10,9 +10,11 @@ public class BlockCleanerMod implements ModInitializer {
 
     @Override
     public void onInitialize() {
+        ModNetworking.registerPayloadTypes();
         ModBlocks.register();
         ModBlockEntities.register();
         ModScreenHandlers.register();
+        ModNetworking.registerServerReceivers();
         LOGGER.info("BlockCleaner initialized.");
     }
 }

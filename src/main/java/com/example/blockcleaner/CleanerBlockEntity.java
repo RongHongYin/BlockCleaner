@@ -8,7 +8,9 @@ import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.entity.player.PlayerInventory;
 import net.minecraft.inventory.Inventory;
 import net.minecraft.item.BlockItem;
+import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
+import net.minecraft.registry.Registries;
 import net.minecraft.registry.tag.BlockTags;
 import net.minecraft.screen.NamedScreenHandlerFactory;
 import net.minecraft.screen.PropertyDelegate;
@@ -17,12 +19,15 @@ import net.minecraft.server.world.ServerWorld;
 import net.minecraft.storage.ReadView;
 import net.minecraft.storage.WriteView;
 import net.minecraft.text.Text;
+import net.minecraft.util.Identifier;
 import net.minecraft.util.ItemScatterer;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Direction;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -34,6 +39,8 @@ public class CleanerBlockEntity extends BlockEntity implements NamedScreenHandle
     public static final int DIR_DOWN = 1;
     public static final int SPEED_FIXED = 0;
     public static final int SPEED_VANILLA = 1;
+    public static final int ACTION_ADD_BLACKLIST_BASE = 400000;
+    public static final int ACTION_REMOVE_BLACKLIST_BASE = 500000;
 
     private int mode = MODE_SURVIVAL;
     private int direction = DIR_DOWN;
@@ -42,6 +49,7 @@ public class CleanerBlockEntity extends BlockEntity implements NamedScreenHandle
     private int speedPerSecond = 30;
     private int speedMode = SPEED_FIXED;
     private boolean keepOneDurability = true;
+    private final Set<Identifier> dropBlacklist = new HashSet<>();
     private boolean active = false;
     private int breakCooldownTicks = 0;
     private int startupFastScanTicks = 0;
@@ -114,6 +122,7 @@ public class CleanerBlockEntity extends BlockEntity implements NamedScreenHandle
         view.putInt("speedPerSecond", speedPerSecond);
         view.putInt("speedMode", speedMode);
         view.putBoolean("keepOneDurability", keepOneDurability);
+        view.putString("dropBlacklist", serializeDropBlacklist());
         view.putBoolean("active", active);
     }
 
@@ -127,6 +136,7 @@ public class CleanerBlockEntity extends BlockEntity implements NamedScreenHandle
         speedPerSecond = Math.max(1, view.getInt("speedPerSecond", 30));
         speedMode = view.getInt("speedMode", SPEED_FIXED);
         keepOneDurability = view.getBoolean("keepOneDurability", true);
+        deserializeDropBlacklist(view.getString("dropBlacklist", ""));
         active = view.getBoolean("active", false);
     }
 
@@ -224,6 +234,9 @@ public class CleanerBlockEntity extends BlockEntity implements NamedScreenHandle
         }
 
         for (ItemStack drop : drops) {
+            if (isDropBlacklisted(drop)) {
+                continue;
+            }
             ItemStack remaining = insertToOutput(drop.copy());
             if (!remaining.isEmpty()) {
                 ItemScatterer.spawn(world, targetPos.getX(), targetPos.getY(), targetPos.getZ(), remaining);
@@ -491,6 +504,26 @@ public class CleanerBlockEntity extends BlockEntity implements NamedScreenHandle
         cursorInitialized = false;
     }
 
+    public void addDropBlacklistItem(Item item) {
+        Identifier id = Registries.ITEM.getId(item);
+        if (id == null || id.equals(Identifier.of("minecraft", "air"))) {
+            return;
+        }
+        if (dropBlacklist.add(id)) {
+            markDirty();
+        }
+    }
+
+    public void removeDropBlacklistItem(Item item) {
+        Identifier id = Registries.ITEM.getId(item);
+        if (id == null) {
+            return;
+        }
+        if (dropBlacklist.remove(id)) {
+            markDirty();
+        }
+    }
+
     public void applyAction(int action) {
         boolean wasActive = active;
         switch (action) {
@@ -566,6 +599,48 @@ public class CleanerBlockEntity extends BlockEntity implements NamedScreenHandle
             return value;
         }
         return Math.max(world.getBottomY(), Math.min(world.getTopYInclusive(), value));
+    }
+
+    private boolean isDropBlacklisted(ItemStack stack) {
+        if (stack.isEmpty()) {
+            return false;
+        }
+        Identifier itemId = Registries.ITEM.getId(stack.getItem());
+        return itemId != null && dropBlacklist.contains(itemId);
+    }
+
+    private String serializeDropBlacklist() {
+        List<String> ids = dropBlacklist.stream()
+                .map(Identifier::toString)
+                .sorted()
+                .toList();
+        return String.join(",", ids);
+    }
+
+    public String serializeDropBlacklistForSync() {
+        return serializeDropBlacklist();
+    }
+
+    private void deserializeDropBlacklist(String raw) {
+        dropBlacklist.clear();
+        if (raw == null || raw.isBlank()) {
+            return;
+        }
+        Arrays.stream(raw.split(","))
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .map(Identifier::tryParse)
+                .filter(id -> id != null && Registries.ITEM.containsId(id))
+                .forEach(dropBlacklist::add);
+    }
+
+    public int[] getDropBlacklistRawIds() {
+        return dropBlacklist.stream()
+                .sorted(Comparator.comparing(Identifier::toString))
+                .map(Registries.ITEM::get)
+                .mapToInt(Registries.ITEM::getRawId)
+                .filter(id -> id >= 0)
+                .toArray();
     }
 
     public enum ToolHint {

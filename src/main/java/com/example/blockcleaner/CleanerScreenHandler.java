@@ -2,14 +2,21 @@ package com.example.blockcleaner;
 
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.entity.player.PlayerInventory;
+import net.minecraft.item.Item;
 import net.minecraft.screen.ArrayPropertyDelegate;
 import net.minecraft.screen.PropertyDelegate;
 import net.minecraft.screen.ScreenHandler;
 import net.minecraft.item.ItemStack;
+import net.minecraft.registry.Registries;
+import net.minecraft.server.network.ServerPlayerEntity;
+
+import java.util.HashSet;
+import java.util.Set;
 
 public class CleanerScreenHandler extends ScreenHandler {
     private final CleanerBlockEntity blockEntity;
     private final PropertyDelegate properties;
+    private Set<Integer> syncedBlacklistRawIds = new HashSet<>();
 
     public CleanerScreenHandler(int syncId, PlayerInventory inventory) {
         this(syncId, inventory, null, new ArrayPropertyDelegate(8));
@@ -49,6 +56,25 @@ public class CleanerScreenHandler extends ScreenHandler {
             blockEntity.setTargetY(id - 30000 - 1024);
             return true;
         }
+        if (id >= CleanerBlockEntity.ACTION_ADD_BLACKLIST_BASE
+                && id < CleanerBlockEntity.ACTION_REMOVE_BLACKLIST_BASE) {
+            int rawId = id - CleanerBlockEntity.ACTION_ADD_BLACKLIST_BASE;
+            Item item = Registries.ITEM.get(rawId);
+            if (item != null) {
+                blockEntity.addDropBlacklistItem(item);
+                sendBlacklistSyncTo(player);
+            }
+            return true;
+        }
+        if (id >= CleanerBlockEntity.ACTION_REMOVE_BLACKLIST_BASE) {
+            int rawId = id - CleanerBlockEntity.ACTION_REMOVE_BLACKLIST_BASE;
+            Item item = Registries.ITEM.get(rawId);
+            if (item != null) {
+                blockEntity.removeDropBlacklistItem(item);
+                sendBlacklistSyncTo(player);
+            }
+            return true;
+        }
         blockEntity.applyAction(id);
         return true;
     }
@@ -83,5 +109,23 @@ public class CleanerScreenHandler extends ScreenHandler {
 
     public boolean shouldKeepOneDurability() {
         return properties.get(7) == 1;
+    }
+
+    public Set<Integer> getSyncedBlacklistRawIds() {
+        return new HashSet<>(syncedBlacklistRawIds);
+    }
+
+    public void setSyncedBlacklistRawIds(Set<Integer> rawIds) {
+        this.syncedBlacklistRawIds = new HashSet<>(rawIds);
+    }
+
+    public CleanerBlockEntity getBlockEntity() {
+        return blockEntity;
+    }
+
+    private void sendBlacklistSyncTo(PlayerEntity player) {
+        if (player instanceof ServerPlayerEntity serverPlayer) {
+            ModNetworking.sendBlacklistSync(serverPlayer, this);
+        }
     }
 }
