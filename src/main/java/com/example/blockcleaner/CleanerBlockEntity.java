@@ -26,8 +26,6 @@ import net.minecraft.util.math.Direction;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -49,7 +47,7 @@ public class CleanerBlockEntity extends BlockEntity implements NamedScreenHandle
     private int speedPerSecond = 30;
     private int speedMode = SPEED_FIXED;
     private boolean keepOneDurability = true;
-    private final Set<Identifier> dropBlacklist = new HashSet<>();
+    private final Set<Identifier> pendingLegacyBlacklist = new HashSet<>();
     private boolean active = false;
     private int breakCooldownTicks = 0;
     private int startupFastScanTicks = 0;
@@ -122,7 +120,6 @@ public class CleanerBlockEntity extends BlockEntity implements NamedScreenHandle
         view.putInt("speedPerSecond", speedPerSecond);
         view.putInt("speedMode", speedMode);
         view.putBoolean("keepOneDurability", keepOneDurability);
-        view.putString("dropBlacklist", serializeDropBlacklist());
         view.putBoolean("active", active);
     }
 
@@ -136,12 +133,17 @@ public class CleanerBlockEntity extends BlockEntity implements NamedScreenHandle
         speedPerSecond = Math.max(1, view.getInt("speedPerSecond", 30));
         speedMode = view.getInt("speedMode", SPEED_FIXED);
         keepOneDurability = view.getBoolean("keepOneDurability", true);
-        deserializeDropBlacklist(view.getString("dropBlacklist", ""));
+        pendingLegacyBlacklist.clear();
+        pendingLegacyBlacklist.addAll(GlobalBlacklistStorage.parseSerializedIds(view.getString("dropBlacklist", "")));
         active = view.getBoolean("active", false);
     }
 
     public void serverTick() {
-        if (world == null || world.isClient() || !active) {
+        if (world == null || world.isClient()) {
+            return;
+        }
+        migrateLegacyBlacklistIfNeeded();
+        if (!active) {
             return;
         }
 
@@ -206,10 +208,8 @@ public class CleanerBlockEntity extends BlockEntity implements NamedScreenHandle
             if (!fillFluidWithInputBlock(targetPos)) {
                 return false;
             }
-            state = world.getBlockState(targetPos);
-            if (state.isAir() || shouldSkipBlock(state, targetPos) || state.getHardness(world, targetPos) < 0) {
-                return false;
-            }
+            // Keep the placed block in place to prevent nearby fluid from immediately flowing back.
+            return true;
         } else if (state.getHardness(world, targetPos) < 0) {
             return false;
         }
@@ -284,6 +284,24 @@ public class CleanerBlockEntity extends BlockEntity implements NamedScreenHandle
         }
 
         ToolHint hint = requiredTool(state);
+        // Phase 1: always reuse an existing single tool first.
+        for (Inventory inv : inventories) {
+            for (int i = 0; i < inv.size(); i++) {
+                ItemStack stack = inv.getStack(i);
+                if (stack.isEmpty() || !stack.isDamageable() || stack.getCount() != 1) {
+                    continue;
+                }
+                if (!matchesHint(stack, hint)) {
+                    continue;
+                }
+                ItemStack used = useToolFromSlot(inv, i);
+                if (!used.isEmpty()) {
+                    return used;
+                }
+            }
+        }
+
+        // Phase 2: no reusable single tool found, split one from a stack and use it.
         for (Inventory inv : inventories) {
             for (int i = 0; i < inv.size(); i++) {
                 ItemStack stack = inv.getStack(i);
@@ -293,21 +311,77 @@ public class CleanerBlockEntity extends BlockEntity implements NamedScreenHandle
                 if (!matchesHint(stack, hint)) {
                     continue;
                 }
-                if (keepOneDurability && stack.getDamage() >= stack.getMaxDamage() - 1) {
+                if (stack.getCount() <= 1) {
+                    // Single tools were already handled in phase 1.
                     continue;
                 }
-
-                stack.setDamage(stack.getDamage() + 1);
-                if (stack.getDamage() >= stack.getMaxDamage()) {
-                    inv.setStack(i, ItemStack.EMPTY);
-                } else {
-                    inv.setStack(i, stack);
+                EmptySlot splitTarget = splitOneToolToEmptySlot(inventories, inv, i, stack);
+                if (splitTarget == null) {
+                    continue;
                 }
-                inv.markDirty();
-                return stack;
+                ItemStack used = useToolFromSlot(splitTarget.inventory, splitTarget.slot);
+                if (!used.isEmpty()) {
+                    return used;
+                }
             }
         }
         return ItemStack.EMPTY;
+    }
+
+    private EmptySlot splitOneToolToEmptySlot(List<Inventory> inventories, Inventory sourceInv, int sourceSlot, ItemStack stackedTool) {
+        if (stackedTool.getCount() <= 1) {
+            return new EmptySlot(sourceInv, sourceSlot);
+        }
+
+        EmptySlot target = findEmptySlotForSingleTool(inventories, sourceInv, sourceSlot);
+        if (target == null) {
+            return null;
+        }
+
+        ItemStack singleTool = stackedTool.copyWithCount(1);
+        stackedTool.decrement(1);
+        sourceInv.setStack(sourceSlot, stackedTool);
+        sourceInv.markDirty();
+
+        target.inventory.setStack(target.slot, singleTool);
+        target.inventory.markDirty();
+        return target;
+    }
+
+    private ItemStack useToolFromSlot(Inventory inv, int slot) {
+        ItemStack tool = inv.getStack(slot);
+        if (tool.isEmpty() || !tool.isDamageable()) {
+            return ItemStack.EMPTY;
+        }
+        if (keepOneDurability && tool.getDamage() >= tool.getMaxDamage() - 1) {
+            return ItemStack.EMPTY;
+        }
+
+        ItemStack usedTool = tool.copy();
+        usedTool.setCount(1);
+        usedTool.setDamage(tool.getDamage() + 1);
+
+        if (usedTool.getDamage() >= usedTool.getMaxDamage()) {
+            inv.setStack(slot, ItemStack.EMPTY);
+        } else {
+            inv.setStack(slot, usedTool);
+        }
+        inv.markDirty();
+        return usedTool;
+    }
+
+    private EmptySlot findEmptySlotForSingleTool(List<Inventory> inventories, Inventory sourceInv, int sourceSlot) {
+        for (Inventory inv : inventories) {
+            for (int i = 0; i < inv.size(); i++) {
+                if (inv == sourceInv && i == sourceSlot) {
+                    continue;
+                }
+                if (inv.getStack(i).isEmpty()) {
+                    return new EmptySlot(inv, i);
+                }
+            }
+        }
+        return null;
     }
 
     private ItemStack insertToOutput(ItemStack stack) {
@@ -505,21 +579,27 @@ public class CleanerBlockEntity extends BlockEntity implements NamedScreenHandle
     }
 
     public void addDropBlacklistItem(Item item) {
+        if (!(world instanceof ServerWorld serverWorld)) {
+            return;
+        }
         Identifier id = Registries.ITEM.getId(item);
         if (id == null || id.equals(Identifier.of("minecraft", "air"))) {
             return;
         }
-        if (dropBlacklist.add(id)) {
+        if (GlobalBlacklistStorage.add(serverWorld.getServer(), id)) {
             markDirty();
         }
     }
 
     public void removeDropBlacklistItem(Item item) {
+        if (!(world instanceof ServerWorld serverWorld)) {
+            return;
+        }
         Identifier id = Registries.ITEM.getId(item);
         if (id == null) {
             return;
         }
-        if (dropBlacklist.remove(id)) {
+        if (GlobalBlacklistStorage.remove(serverWorld.getServer(), id)) {
             markDirty();
         }
     }
@@ -602,48 +682,42 @@ public class CleanerBlockEntity extends BlockEntity implements NamedScreenHandle
     }
 
     private boolean isDropBlacklisted(ItemStack stack) {
+        if (!(world instanceof ServerWorld serverWorld)) {
+            return false;
+        }
         if (stack.isEmpty()) {
             return false;
         }
         Identifier itemId = Registries.ITEM.getId(stack.getItem());
-        return itemId != null && dropBlacklist.contains(itemId);
-    }
-
-    private String serializeDropBlacklist() {
-        List<String> ids = dropBlacklist.stream()
-                .map(Identifier::toString)
-                .sorted()
-                .toList();
-        return String.join(",", ids);
+        return itemId != null && GlobalBlacklistStorage.contains(serverWorld.getServer(), itemId);
     }
 
     public String serializeDropBlacklistForSync() {
-        return serializeDropBlacklist();
-    }
-
-    private void deserializeDropBlacklist(String raw) {
-        dropBlacklist.clear();
-        if (raw == null || raw.isBlank()) {
-            return;
+        if (!(world instanceof ServerWorld serverWorld)) {
+            return "";
         }
-        Arrays.stream(raw.split(","))
-                .map(String::trim)
-                .filter(s -> !s.isEmpty())
-                .map(Identifier::tryParse)
-                .filter(id -> id != null && Registries.ITEM.containsId(id))
-                .forEach(dropBlacklist::add);
+        return GlobalBlacklistStorage.serialize(serverWorld.getServer());
     }
 
     public int[] getDropBlacklistRawIds() {
-        return dropBlacklist.stream()
-                .sorted(Comparator.comparing(Identifier::toString))
-                .map(Registries.ITEM::get)
-                .mapToInt(Registries.ITEM::getRawId)
-                .filter(id -> id >= 0)
-                .toArray();
+        if (!(world instanceof ServerWorld serverWorld)) {
+            return new int[0];
+        }
+        return GlobalBlacklistStorage.rawIds(serverWorld.getServer());
+    }
+
+    private void migrateLegacyBlacklistIfNeeded() {
+        if (pendingLegacyBlacklist.isEmpty() || !(world instanceof ServerWorld serverWorld)) {
+            return;
+        }
+        GlobalBlacklistStorage.addAll(serverWorld.getServer(), pendingLegacyBlacklist);
+        pendingLegacyBlacklist.clear();
     }
 
     public enum ToolHint {
         PICKAXE, AXE, SHOVEL, ANY
+    }
+
+    private record EmptySlot(Inventory inventory, int slot) {
     }
 }
