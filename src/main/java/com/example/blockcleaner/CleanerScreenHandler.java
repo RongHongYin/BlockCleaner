@@ -19,7 +19,7 @@ public class CleanerScreenHandler extends ScreenHandler {
     private Set<Integer> syncedBlacklistRawIds = new HashSet<>();
 
     public CleanerScreenHandler(int syncId, PlayerInventory inventory) {
-        this(syncId, inventory, null, new ArrayPropertyDelegate(8));
+        this(syncId, inventory, null, new ArrayPropertyDelegate(30));
     }
 
     public CleanerScreenHandler(int syncId, PlayerInventory inventory, CleanerBlockEntity blockEntity, PropertyDelegate properties) {
@@ -54,6 +54,25 @@ public class CleanerScreenHandler extends ScreenHandler {
         }
         if (id >= 30000 && id <= 34096) {
             blockEntity.setTargetY(id - 30000 - 1024);
+            return true;
+        }
+        if (id >= 600000 && id < 600006) {
+            blockEntity.cycleFaceSpecificBlock(id - 600000);
+            return true;
+        }
+        if (id >= 700000 && id < 700006) {
+            blockEntity.copyFaceConfigToAll(id - 700000);
+            return true;
+        }
+        if (id >= CleanerBlockEntity.ACTION_SET_BUILD_FACE_BLOCK_BASE
+                && id < CleanerBlockEntity.ACTION_SET_BUILD_FACE_BLOCK_BASE + 900000) {
+            int payload = id - CleanerBlockEntity.ACTION_SET_BUILD_FACE_BLOCK_BASE;
+            int face = payload / 100000;
+            int rawId = payload % 100000;
+            Item item = Registries.ITEM.get(rawId);
+            if (item != null) {
+                blockEntity.setFaceSpecificBlock(face, item);
+            }
             return true;
         }
         if (id >= CleanerBlockEntity.ACTION_ADD_BLACKLIST_BASE
@@ -109,6 +128,43 @@ public class CleanerScreenHandler extends ScreenHandler {
 
     public boolean shouldKeepOneDurability() {
         return properties.get(7) == 1;
+    }
+
+    public int getRangeMode() {
+        return properties.get(8);
+    }
+
+    public boolean isBuildWithClear() {
+        return properties.get(9) == 1;
+    }
+
+    public boolean isBuildActive() {
+        return properties.get(10) == 1;
+    }
+
+    public boolean isBuildFaceEnabled(int face) {
+        if (face < 0 || face >= 6) {
+            return false;
+        }
+        return properties.get(11 + face) == 1;
+    }
+
+    public boolean isBuildFaceUseSpecific(int face) {
+        if (face < 0 || face >= 6) {
+            return false;
+        }
+        return properties.get(17 + face) == 1;
+    }
+
+    public int getBuildFaceSpecificRawId(int face) {
+        if (face < 0 || face >= 6) {
+            return -1;
+        }
+        return properties.get(23 + face);
+    }
+
+    public int getBuildLayerMode() {
+        return properties.get(29);
     }
 
     public Set<Integer> getSyncedBlacklistRawIds() {

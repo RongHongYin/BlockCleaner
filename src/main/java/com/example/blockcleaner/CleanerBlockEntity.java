@@ -35,18 +35,37 @@ public class CleanerBlockEntity extends BlockEntity implements NamedScreenHandle
     public static final int MODE_SURVIVAL = 1;
     public static final int DIR_UP = 0;
     public static final int DIR_DOWN = 1;
+    public static final int RANGE_MODE_CENTER = 0;
+    public static final int RANGE_MODE_TOP_LEFT = 1;
     public static final int SPEED_FIXED = 0;
     public static final int SPEED_VANILLA = 1;
     public static final int ACTION_ADD_BLACKLIST_BASE = 400000;
     public static final int ACTION_REMOVE_BLACKLIST_BASE = 500000;
+    public static final int ACTION_SET_BUILD_FACE_BLOCK_BASE = 800000;
+    public static final int BUILD_FACE_UP = 0;
+    public static final int BUILD_FACE_DOWN = 1;
+    public static final int BUILD_FACE_FRONT = 2;
+    public static final int BUILD_FACE_BACK = 3;
+    public static final int BUILD_FACE_LEFT = 4;
+    public static final int BUILD_FACE_RIGHT = 5;
+    public static final int BUILD_LAYER_INNER = 0;
+    public static final int BUILD_LAYER_OUTER = 1;
+    private static final int BUILD_FACE_COUNT = 6;
 
     private int mode = MODE_SURVIVAL;
     private int direction = DIR_DOWN;
+    private int rangeMode = RANGE_MODE_CENTER;
     private int rangeChunks = 1;
     private int targetY = 0;
     private int speedPerSecond = 30;
     private int speedMode = SPEED_FIXED;
     private boolean keepOneDurability = true;
+    private boolean buildWithClear = false;
+    private boolean buildActive = false;
+    private int buildLayerMode = BUILD_LAYER_INNER;
+    private final boolean[] buildFaceEnabled = new boolean[]{true, true, true, true, true, true};
+    private final boolean[] buildFaceUseSpecific = new boolean[BUILD_FACE_COUNT];
+    private final int[] buildFaceSpecificRawIds = new int[]{-1, -1, -1, -1, -1, -1};
     private final Set<Identifier> pendingLegacyBlacklist = new HashSet<>();
     private boolean active = false;
     private int breakCooldownTicks = 0;
@@ -69,6 +88,13 @@ public class CleanerBlockEntity extends BlockEntity implements NamedScreenHandle
                 case 5 -> active ? 1 : 0;
                 case 6 -> speedMode;
                 case 7 -> keepOneDurability ? 1 : 0;
+                case 8 -> rangeMode;
+                case 9 -> buildWithClear ? 1 : 0;
+                case 10 -> buildActive ? 1 : 0;
+                case 11, 12, 13, 14, 15, 16 -> buildFaceEnabled[index - 11] ? 1 : 0;
+                case 17, 18, 19, 20, 21, 22 -> buildFaceUseSpecific[index - 17] ? 1 : 0;
+                case 23, 24, 25, 26, 27, 28 -> buildFaceSpecificRawIds[index - 23];
+                case 29 -> buildLayerMode;
                 default -> 0;
             };
         }
@@ -84,6 +110,13 @@ public class CleanerBlockEntity extends BlockEntity implements NamedScreenHandle
                 case 5 -> active = value == 1;
                 case 6 -> speedMode = value;
                 case 7 -> keepOneDurability = value == 1;
+                case 8 -> rangeMode = value == RANGE_MODE_TOP_LEFT ? RANGE_MODE_TOP_LEFT : RANGE_MODE_CENTER;
+                case 9 -> buildWithClear = value == 1;
+                case 10 -> buildActive = value == 1;
+                case 11, 12, 13, 14, 15, 16 -> buildFaceEnabled[index - 11] = value == 1;
+                case 17, 18, 19, 20, 21, 22 -> buildFaceUseSpecific[index - 17] = value == 1;
+                case 23, 24, 25, 26, 27, 28 -> buildFaceSpecificRawIds[index - 23] = value >= 0 ? value : -1;
+                case 29 -> buildLayerMode = value == BUILD_LAYER_OUTER ? BUILD_LAYER_OUTER : BUILD_LAYER_INNER;
                 default -> {
                 }
             }
@@ -91,7 +124,7 @@ public class CleanerBlockEntity extends BlockEntity implements NamedScreenHandle
 
         @Override
         public int size() {
-            return 8;
+            return 30;
         }
     };
 
@@ -115,11 +148,20 @@ public class CleanerBlockEntity extends BlockEntity implements NamedScreenHandle
         super.writeData(view);
         view.putInt("mode", mode);
         view.putInt("direction", direction);
+        view.putInt("rangeMode", rangeMode);
         view.putInt("rangeChunks", rangeChunks);
         view.putInt("targetY", targetY);
         view.putInt("speedPerSecond", speedPerSecond);
         view.putInt("speedMode", speedMode);
         view.putBoolean("keepOneDurability", keepOneDurability);
+        view.putBoolean("buildWithClear", buildWithClear);
+        view.putBoolean("buildActive", buildActive);
+        view.putInt("buildLayerMode", buildLayerMode);
+        for (int i = 0; i < BUILD_FACE_COUNT; i++) {
+            view.putBoolean("buildFaceEnabled" + i, buildFaceEnabled[i]);
+            view.putBoolean("buildFaceUseSpecific" + i, buildFaceUseSpecific[i]);
+            view.putInt("buildFaceSpecificRawId" + i, buildFaceSpecificRawIds[i]);
+        }
         view.putBoolean("active", active);
     }
 
@@ -128,11 +170,27 @@ public class CleanerBlockEntity extends BlockEntity implements NamedScreenHandle
         super.readData(view);
         mode = view.getInt("mode", MODE_SURVIVAL);
         direction = view.getInt("direction", DIR_DOWN);
+        rangeMode = view.getInt("rangeMode", RANGE_MODE_CENTER);
+        if (rangeMode != RANGE_MODE_TOP_LEFT) {
+            rangeMode = RANGE_MODE_CENTER;
+        }
         rangeChunks = Math.max(1, view.getInt("rangeChunks", 1));
         targetY = view.getInt("targetY", pos.getY() - 1);
         speedPerSecond = Math.max(1, view.getInt("speedPerSecond", 30));
         speedMode = view.getInt("speedMode", SPEED_FIXED);
         keepOneDurability = view.getBoolean("keepOneDurability", true);
+        buildWithClear = view.getBoolean("buildWithClear", false);
+        buildActive = view.getBoolean("buildActive", false);
+        buildLayerMode = view.getInt("buildLayerMode", BUILD_LAYER_INNER);
+        if (buildLayerMode != BUILD_LAYER_OUTER) {
+            buildLayerMode = BUILD_LAYER_INNER;
+        }
+        for (int i = 0; i < BUILD_FACE_COUNT; i++) {
+            buildFaceEnabled[i] = view.getBoolean("buildFaceEnabled" + i, true);
+            buildFaceUseSpecific[i] = view.getBoolean("buildFaceUseSpecific" + i, false);
+            int rawId = view.getInt("buildFaceSpecificRawId" + i, -1);
+            buildFaceSpecificRawIds[i] = rawId >= 0 ? rawId : -1;
+        }
         pendingLegacyBlacklist.clear();
         pendingLegacyBlacklist.addAll(GlobalBlacklistStorage.parseSerializedIds(view.getString("dropBlacklist", "")));
         active = view.getBoolean("active", false);
@@ -143,7 +201,7 @@ public class CleanerBlockEntity extends BlockEntity implements NamedScreenHandle
             return;
         }
         migrateLegacyBlacklistIfNeeded();
-        if (!active) {
+        if (!active && !buildActive) {
             return;
         }
 
@@ -175,17 +233,169 @@ public class CleanerBlockEntity extends BlockEntity implements NamedScreenHandle
                     announceStatus("清理任务完成，机器已自动停止");
                     markDirty();
                 }
+                if (buildActive) {
+                    buildActive = false;
+                    announceStatus("建造任务完成，机器已自动停止");
+                    markDirty();
+                }
                 return;
             }
 
-            if (processBlock(target)) {
-                startupFastScanTicks = 0;
-                if (speedMode == SPEED_VANILLA) {
-                    done = blocksPerTick;
+            if (active) {
+                boolean cleaned = processBlock(target);
+                boolean built = buildWithClear && performBuildAt(target);
+                if (cleaned || built) {
+                    startupFastScanTicks = 0;
+                    if (speedMode == SPEED_VANILLA) {
+                        done = blocksPerTick;
+                    }
+                    done++;
                 }
+            } else if (!active && buildActive && performBuildAt(target)) {
+                startupFastScanTicks = 0;
                 done++;
             }
         }
+    }
+
+    private boolean performBuildAt(BlockPos centerPos) {
+        boolean placedAny = false;
+        ScanBounds bounds = getCurrentScanBounds();
+        if (bounds == null) {
+            return false;
+        }
+        Direction front = getCachedState().get(CleanerBlock.FACING);
+        // Keep left/right consistent with input/output side definition:
+        // facing the machine front, left is clockwise and right is counterclockwise.
+        Direction left = front.rotateYClockwise();
+        Direction right = front.rotateYCounterclockwise();
+        for (int face = 0; face < BUILD_FACE_COUNT; face++) {
+            if (!buildFaceEnabled[face]) {
+                continue;
+            }
+            Direction dir = switch (face) {
+                case BUILD_FACE_UP -> Direction.UP;
+                case BUILD_FACE_DOWN -> Direction.DOWN;
+                case BUILD_FACE_FRONT -> front.getOpposite();
+                case BUILD_FACE_BACK -> front;
+                case BUILD_FACE_LEFT -> left;
+                case BUILD_FACE_RIGHT -> right;
+                default -> null;
+            };
+            if (dir == null) {
+                continue;
+            }
+            if (!isOnBoundaryFace(centerPos, dir, bounds)) {
+                continue;
+            }
+            BlockPos placePos = buildLayerMode == BUILD_LAYER_OUTER ? centerPos.offset(dir) : centerPos;
+            if (placePos.equals(this.pos)) {
+                continue;
+            }
+            if (world.getBlockEntity(placePos) != null) {
+                continue;
+            }
+            if (buildLayerMode == BUILD_LAYER_OUTER && !prepareOuterPlacementPlacePos(placePos)) {
+                continue;
+            }
+            BlockState currentState = world.getBlockState(placePos);
+            if (!currentState.isAir() && currentState.getFluidState().isEmpty()) {
+                continue;
+            }
+            if (placeBuildBlock(placePos, face)) {
+                placedAny = true;
+            }
+        }
+        return placedAny;
+    }
+
+    private boolean placeBuildBlock(BlockPos placePos, int face) {
+        List<Inventory> inventories = collectSideInventories(true);
+        if (inventories.isEmpty()) {
+            return false;
+        }
+        for (Inventory inv : inventories) {
+            for (int i = 0; i < inv.size(); i++) {
+                ItemStack stack = inv.getStack(i);
+                if (stack.isEmpty() || !(stack.getItem() instanceof BlockItem blockItem)) {
+                    continue;
+                }
+                int rawId = Registries.ITEM.getRawId(stack.getItem());
+                if (buildFaceUseSpecific[face]) {
+                    int expectedRawId = buildFaceSpecificRawIds[face];
+                    if (expectedRawId < 0 || rawId != expectedRawId) {
+                        continue;
+                    }
+                }
+                BlockState placeState = blockItem.getBlock().getDefaultState();
+                if (placeState.isAir() || !placeState.getFluidState().isEmpty()) {
+                    continue;
+                }
+                if (!world.setBlockState(placePos, placeState, Block.NOTIFY_ALL)) {
+                    continue;
+                }
+                stack.decrement(1);
+                inv.setStack(i, stack);
+                inv.markDirty();
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean isOnBoundaryFace(BlockPos posToCheck, Direction faceDir, ScanBounds bounds) {
+        return switch (faceDir) {
+            case UP -> posToCheck.getY() == bounds.maxY();
+            case DOWN -> posToCheck.getY() == bounds.minY();
+            case NORTH -> posToCheck.getZ() == bounds.minZ();
+            case SOUTH -> posToCheck.getZ() == bounds.maxZ();
+            case WEST -> posToCheck.getX() == bounds.minX();
+            case EAST -> posToCheck.getX() == bounds.maxX();
+        };
+    }
+
+    private boolean prepareOuterPlacementPlacePos(BlockPos placePos) {
+        BlockState state = world.getBlockState(placePos);
+        if (state.isAir() || !state.getFluidState().isEmpty()) {
+            return true;
+        }
+        if (shouldSkipBlock(state, placePos)) {
+            return false;
+        }
+        return processBlock(placePos) || world.getBlockState(placePos).isAir() || !world.getBlockState(placePos).getFluidState().isEmpty();
+    }
+
+    public void cycleFaceSpecificBlock(int face) {
+        if (face < 0 || face >= BUILD_FACE_COUNT) {
+            return;
+        }
+        List<Integer> candidates = new ArrayList<>();
+        for (Inventory inv : collectSideInventories(true)) {
+            for (int i = 0; i < inv.size(); i++) {
+                ItemStack stack = inv.getStack(i);
+                if (stack.isEmpty() || !(stack.getItem() instanceof BlockItem blockItem)) {
+                    continue;
+                }
+                BlockState placeState = blockItem.getBlock().getDefaultState();
+                if (placeState.isAir() || !placeState.getFluidState().isEmpty()) {
+                    continue;
+                }
+                int rawId = Registries.ITEM.getRawId(stack.getItem());
+                if (rawId >= 0 && !candidates.contains(rawId)) {
+                    candidates.add(rawId);
+                }
+            }
+        }
+        if (candidates.isEmpty()) {
+            buildFaceSpecificRawIds[face] = -1;
+            markDirty();
+            return;
+        }
+        int current = buildFaceSpecificRawIds[face];
+        int idx = candidates.indexOf(current);
+        int nextIdx = (idx + 1) % candidates.size();
+        buildFaceSpecificRawIds[face] = candidates.get(nextIdx);
+        markDirty();
     }
 
     private boolean processBlock(BlockPos targetPos) {
@@ -497,16 +707,61 @@ public class CleanerBlockEntity extends BlockEntity implements NamedScreenHandle
     }
 
     private BlockPos nextTargetPos() {
+        ScanBounds bounds = getCurrentScanBounds();
+        if (bounds == null) {
+            return null;
+        }
+        int minX = bounds.minX();
+        int maxX = bounds.maxX();
+        int minZ = bounds.minZ();
+        int maxZ = bounds.maxZ();
+        int minY = bounds.minY();
+        int maxY = bounds.maxY();
+        int startY = bounds.startY();
+
+        if (!cursorInitialized) {
+            cursorX = minX;
+            cursorZ = minZ;
+            cursorY = startY;
+            cursorInitialized = true;
+        }
+
+        if (cursorX > maxX || cursorZ > maxZ || cursorY < minY || cursorY > maxY) {
+            resetCursor();
+            return null;
+        }
+
+        BlockPos out = new BlockPos(cursorX, cursorY, cursorZ);
+        advanceCursor(minX, maxX, minZ, maxZ, minY, maxY);
+        return out;
+    }
+
+    private ScanBounds getCurrentScanBounds() {
         if (world == null) {
             return null;
         }
         int chunkX = pos.getX() >> 4;
         int chunkZ = pos.getZ() >> 4;
-        int half = (rangeChunks - 1) / 2;
-        int minX = (chunkX - half) << 4;
-        int maxX = ((chunkX + half + 1) << 4) - 1;
-        int minZ = (chunkZ - half) << 4;
-        int maxZ = ((chunkZ + half + 1) << 4) - 1;
+        int minChunkX;
+        int maxChunkX;
+        int minChunkZ;
+        int maxChunkZ;
+        if (rangeMode == RANGE_MODE_TOP_LEFT) {
+            minChunkX = chunkX;
+            maxChunkX = chunkX + rangeChunks - 1;
+            minChunkZ = chunkZ;
+            maxChunkZ = chunkZ + rangeChunks - 1;
+        } else {
+            int half = (rangeChunks - 1) / 2;
+            minChunkX = chunkX - half;
+            maxChunkX = chunkX + half;
+            minChunkZ = chunkZ - half;
+            maxChunkZ = chunkZ + half;
+        }
+        int minX = minChunkX << 4;
+        int maxX = ((maxChunkX + 1) << 4) - 1;
+        int minZ = minChunkZ << 4;
+        int maxZ = ((maxChunkZ + 1) << 4) - 1;
 
         int worldMinY = world.getBottomY();
         int worldMaxY = world.getTopYInclusive();
@@ -530,22 +785,7 @@ public class CleanerBlockEntity extends BlockEntity implements NamedScreenHandle
                 return null;
             }
         }
-
-        if (!cursorInitialized) {
-            cursorX = minX;
-            cursorZ = minZ;
-            cursorY = startY;
-            cursorInitialized = true;
-        }
-
-        if (cursorX > maxX || cursorZ > maxZ || cursorY < minY || cursorY > maxY) {
-            resetCursor();
-            return null;
-        }
-
-        BlockPos out = new BlockPos(cursorX, cursorY, cursorZ);
-        advanceCursor(minX, maxX, minZ, maxZ, minY, maxY);
-        return out;
+        return new ScanBounds(minX, maxX, minY, maxY, minZ, maxZ, startY);
     }
 
     private void advanceCursor(int minX, int maxX, int minZ, int maxZ, int minY, int maxY) {
@@ -609,14 +849,36 @@ public class CleanerBlockEntity extends BlockEntity implements NamedScreenHandle
         switch (action) {
             case 1 -> direction = DIR_UP;
             case 2 -> direction = DIR_DOWN;
-            case 3 -> rangeChunks = Math.min(99, rangeChunks + 2);
-            case 4 -> rangeChunks = Math.max(1, rangeChunks - 2);
+            case 3 -> rangeChunks = Math.min(99, rangeChunks + (rangeMode == RANGE_MODE_CENTER ? 2 : 1));
+            case 4 -> rangeChunks = Math.max(1, rangeChunks - (rangeMode == RANGE_MODE_CENTER ? 2 : 1));
             case 5 -> speedPerSecond = Math.min(10000, speedPerSecond + 10);
             case 6 -> speedPerSecond = Math.max(10, speedPerSecond - 10);
             case 7 -> active = !active;
             case 8 -> mode = (mode == MODE_CREATIVE) ? MODE_SURVIVAL : MODE_CREATIVE;
             case 9 -> speedMode = (speedMode == SPEED_FIXED) ? SPEED_VANILLA : SPEED_FIXED;
             case 10 -> keepOneDurability = !keepOneDurability;
+            case 11 -> rangeMode = (rangeMode == RANGE_MODE_CENTER) ? RANGE_MODE_TOP_LEFT : RANGE_MODE_CENTER;
+            case 12 -> buildWithClear = !buildWithClear;
+            case 13 -> buildActive = !buildActive;
+            case 14 -> buildLayerMode = (buildLayerMode == BUILD_LAYER_INNER) ? BUILD_LAYER_OUTER : BUILD_LAYER_INNER;
+            case 100, 101, 102, 103, 104, 105 -> {
+                int face = action - 100;
+                buildFaceEnabled[face] = !buildFaceEnabled[face];
+            }
+            case 106 -> {
+                for (int i = 0; i < BUILD_FACE_COUNT; i++) {
+                    buildFaceEnabled[i] = true;
+                }
+            }
+            case 107 -> {
+                for (int i = 0; i < BUILD_FACE_COUNT; i++) {
+                    buildFaceEnabled[i] = false;
+                }
+            }
+            case 200, 201, 202, 203, 204, 205 -> {
+                int face = action - 200;
+                buildFaceUseSpecific[face] = !buildFaceUseSpecific[face];
+            }
             default -> {
             }
         }
@@ -634,6 +896,46 @@ public class CleanerBlockEntity extends BlockEntity implements NamedScreenHandle
             startupFastScanTicks = 0;
             announceStatus("任务已手动停止");
         }
+        if (!wasActive && !active && buildActive) {
+            resetCursor();
+            startupFastScanTicks = 20;
+            announceStatus("开始执行建造任务");
+        }
+    }
+
+    public void copyFaceConfigToAll(int sourceFace) {
+        if (sourceFace < 0 || sourceFace >= BUILD_FACE_COUNT) {
+            return;
+        }
+        boolean enabled = buildFaceEnabled[sourceFace];
+        boolean useSpecific = buildFaceUseSpecific[sourceFace];
+        int specificRawId = buildFaceSpecificRawIds[sourceFace];
+        for (int i = 0; i < BUILD_FACE_COUNT; i++) {
+            buildFaceEnabled[i] = enabled;
+            buildFaceUseSpecific[i] = useSpecific;
+            buildFaceSpecificRawIds[i] = specificRawId;
+        }
+        markDirty();
+    }
+
+    public void setFaceSpecificBlock(int face, Item item) {
+        if (face < 0 || face >= BUILD_FACE_COUNT || item == null) {
+            return;
+        }
+        if (!(item instanceof BlockItem blockItem)) {
+            return;
+        }
+        BlockState placeState = blockItem.getBlock().getDefaultState();
+        if (placeState.isAir() || !placeState.getFluidState().isEmpty()) {
+            return;
+        }
+        int rawId = Registries.ITEM.getRawId(item);
+        if (rawId < 0) {
+            return;
+        }
+        buildFaceSpecificRawIds[face] = rawId;
+        buildFaceUseSpecific[face] = true;
+        markDirty();
     }
 
     private void announceStatus(String content) {
@@ -662,7 +964,7 @@ public class CleanerBlockEntity extends BlockEntity implements NamedScreenHandle
 
     private int normalizeRange(int value) {
         int clamped = Math.max(1, Math.min(99, value));
-        if (clamped % 2 == 0) {
+        if (rangeMode == RANGE_MODE_CENTER && clamped % 2 == 0) {
             clamped = Math.min(99, clamped + 1);
         }
         return clamped;
@@ -719,5 +1021,8 @@ public class CleanerBlockEntity extends BlockEntity implements NamedScreenHandle
     }
 
     private record EmptySlot(Inventory inventory, int slot) {
+    }
+
+    private record ScanBounds(int minX, int maxX, int minY, int maxY, int minZ, int maxZ, int startY) {
     }
 }
