@@ -45,7 +45,11 @@ public class CleanerScreenHandler extends ScreenHandler {
             return false;
         }
         if (id >= 1000 && id <= 1099) {
-            blockEntity.setRangeChunks(id - 1000);
+            blockEntity.setRangeChunksX(id - 1000);
+            return true;
+        }
+        if (id >= 1100 && id <= 1199) {
+            blockEntity.setRangeChunksZ(id - 1100);
             return true;
         }
         if (id >= 2000 && id <= 12000) {
@@ -106,8 +110,12 @@ public class CleanerScreenHandler extends ScreenHandler {
         return properties.get(1);
     }
 
-    public int getRangeChunks() {
+    public int getRangeChunksX() {
         return properties.get(2);
+    }
+
+    public int getRangeChunksZ() {
+        return properties.get(8);
     }
 
     public int getSpeedPerSecond() {
@@ -128,10 +136,6 @@ public class CleanerScreenHandler extends ScreenHandler {
 
     public boolean shouldKeepOneDurability() {
         return properties.get(7) == 1;
-    }
-
-    public int getRangeMode() {
-        return properties.get(8);
     }
 
     public boolean isBuildWithClear() {

@@ -37,7 +37,6 @@ public class CleanerScreen extends HandledScreen<CleanerScreenHandler> {
     private ButtonWidget modeButton;
     private ButtonWidget speedModeButton;
     private ButtonWidget keepDurabilityButton;
-    private ButtonWidget rangeModeButton;
     private ButtonWidget startStopButton;
     private ButtonWidget clearBuildLinkButton;
     private ButtonWidget buildStartStopButton;
@@ -52,11 +51,14 @@ public class CleanerScreen extends HandledScreen<CleanerScreenHandler> {
     private ButtonWidget buildAllDisableButton;
     private ButtonWidget buildCopyToAllButton;
     private ButtonWidget buildLinkButton;
-    private ButtonWidget rangeMinusButton;
-    private ButtonWidget rangePlusButton;
+    private ButtonWidget rangeXMinusButton;
+    private ButtonWidget rangeXPlusButton;
+    private ButtonWidget rangeZMinusButton;
+    private ButtonWidget rangeZPlusButton;
     private ButtonWidget speedMinusButton;
     private ButtonWidget speedPlusButton;
-    private TextFieldWidget rangeInput;
+    private TextFieldWidget rangeXInput;
+    private TextFieldWidget rangeZInput;
     private TextFieldWidget targetYInput;
     private TextFieldWidget speedInput;
     private TextFieldWidget blacklistSearchInput;
@@ -100,7 +102,6 @@ public class CleanerScreen extends HandledScreen<CleanerScreenHandler> {
         this.modeButton = null;
         this.speedModeButton = null;
         this.keepDurabilityButton = null;
-        this.rangeModeButton = null;
         this.startStopButton = null;
         this.clearBuildLinkButton = null;
         this.buildStartStopButton = null;
@@ -115,11 +116,14 @@ public class CleanerScreen extends HandledScreen<CleanerScreenHandler> {
         this.buildAllDisableButton = null;
         this.buildCopyToAllButton = null;
         this.buildLinkButton = null;
-        this.rangeMinusButton = null;
-        this.rangePlusButton = null;
+        this.rangeXMinusButton = null;
+        this.rangeXPlusButton = null;
+        this.rangeZMinusButton = null;
+        this.rangeZPlusButton = null;
         this.speedMinusButton = null;
         this.speedPlusButton = null;
-        this.rangeInput = null;
+        this.rangeXInput = null;
+        this.rangeZInput = null;
         this.targetYInput = null;
         this.speedInput = null;
         this.blacklistSearchInput = null;
@@ -179,13 +183,20 @@ public class CleanerScreen extends HandledScreen<CleanerScreenHandler> {
         int valueXLeft = leftColX + labelW + 8;
         int valueXRight = rightColX + labelW + 8;
 
-        // 左列：清除模式、范围模式、目标Y、速度
+        // 左列：清除模式、长(X)、目标Y、速度
+        int stepW = 22;
+        int rangeInputW = valueW - stepW * 2 - 8;
         this.modeButton = addScrollable(this.addDrawableChild(ButtonWidget.builder(
                 Text.literal(handler.getMode() == CleanerBlockEntity.MODE_CREATIVE ? "创造模式" : "生存模式"),
                 b -> sendAction(8)).dimensions(valueXLeft, row0, valueW, rowH).build()));
-        this.rangeModeButton = addScrollable(this.addDrawableChild(ButtonWidget.builder(
-                Text.literal(handler.getRangeMode() == CleanerBlockEntity.RANGE_MODE_TOP_LEFT ? "左上角" : "中心"),
-                b -> sendAction(11)).dimensions(valueXLeft, row1, valueW, rowH).build()));
+        this.rangeXInput = addScrollable(this.addDrawableChild(new TextFieldWidget(this.textRenderer, valueXLeft + stepW + 4, row1, rangeInputW, rowH, Text.literal("长X"))));
+        this.rangeXInput.setMaxLength(3);
+        this.rangeXInput.setText(Integer.toString(handler.getRangeChunksX()));
+        this.rangeXInput.setChangedListener(this::onRangeXChanged);
+        this.rangeXMinusButton = addScrollable(this.addDrawableChild(ButtonWidget.builder(Text.literal("-"),
+                b -> sendAction(4)).dimensions(valueXLeft, row1, stepW, rowH).build()));
+        this.rangeXPlusButton = addScrollable(this.addDrawableChild(ButtonWidget.builder(Text.literal("+"),
+                b -> sendAction(3)).dimensions(valueXLeft + stepW + 4 + rangeInputW + 4, row1, stepW, rowH).build()));
         this.targetYInput = addScrollable(this.addDrawableChild(new TextFieldWidget(this.textRenderer, valueXLeft, row2, valueW, rowH, Text.literal("目标Y"))));
         this.targetYInput.setMaxLength(6);
         this.targetYInput.setText(Integer.toString(handler.getTargetY()));
@@ -201,16 +212,14 @@ public class CleanerScreen extends HandledScreen<CleanerScreenHandler> {
                 b -> sendAction(handler.getDirection() == CleanerBlockEntity.DIR_UP ? 2 : 1))
                 .dimensions(valueXRight, row0, valueW, rowH).build()));
 
-        int stepW = 22;
-        int rangeInputW = valueW - stepW * 2 - 8;
-        this.rangeInput = addScrollable(this.addDrawableChild(new TextFieldWidget(this.textRenderer, valueXRight + stepW + 4, row1, rangeInputW, rowH, Text.literal("范围"))));
-        this.rangeInput.setMaxLength(3);
-        this.rangeInput.setText(Integer.toString(handler.getRangeChunks()));
-        this.rangeInput.setChangedListener(this::onRangeChanged);
-        this.rangeMinusButton = addScrollable(this.addDrawableChild(ButtonWidget.builder(Text.literal("-"),
-                b -> sendAction(4)).dimensions(valueXRight, row1, stepW, rowH).build()));
-        this.rangePlusButton = addScrollable(this.addDrawableChild(ButtonWidget.builder(Text.literal("+"),
-                b -> sendAction(3)).dimensions(valueXRight + stepW + 4 + rangeInputW + 4, row1, stepW, rowH).build()));
+        this.rangeZInput = addScrollable(this.addDrawableChild(new TextFieldWidget(this.textRenderer, valueXRight + stepW + 4, row1, rangeInputW, rowH, Text.literal("宽Z"))));
+        this.rangeZInput.setMaxLength(3);
+        this.rangeZInput.setText(Integer.toString(handler.getRangeChunksZ()));
+        this.rangeZInput.setChangedListener(this::onRangeZChanged);
+        this.rangeZMinusButton = addScrollable(this.addDrawableChild(ButtonWidget.builder(Text.literal("-"),
+                b -> sendAction(16)).dimensions(valueXRight, row1, stepW, rowH).build()));
+        this.rangeZPlusButton = addScrollable(this.addDrawableChild(ButtonWidget.builder(Text.literal("+"),
+                b -> sendAction(15)).dimensions(valueXRight + stepW + 4 + rangeInputW + 4, row1, stepW, rowH).build()));
 
         this.speedModeButton = addScrollable(this.addDrawableChild(ButtonWidget.builder(
                 Text.literal(handler.getSpeedMode() == CleanerBlockEntity.SPEED_FIXED ? "固定" : "原版"),
@@ -491,12 +500,12 @@ public class CleanerScreen extends HandledScreen<CleanerScreenHandler> {
             drawFrame(context, rightColX - 2, row0 - 2, colW + 4, (row3 + rowH) - row0 + 4);
 
             context.drawText(this.textRenderer, Text.literal("清除模式"), leftColX + 8, row0 + 8, textColor, false);
-            context.drawText(this.textRenderer, Text.literal("范围模式"), leftColX + 8, row1 + 8, textColor, false);
+            context.drawText(this.textRenderer, Text.literal("长(X 区块)"), leftColX + 8, row1 + 8, textColor, false);
             context.drawText(this.textRenderer, Text.literal("目标 Y"), leftColX + 8, row2 + 8, textColor, false);
             context.drawText(this.textRenderer, Text.literal("速度(方块/秒)"), leftColX + 8, row3 + 8, textColor, false);
 
             context.drawText(this.textRenderer, Text.literal("方向"), rightColX + 8, row0 + 8, textColor, false);
-            context.drawText(this.textRenderer, Text.literal("范围(区块)"), rightColX + 8, row1 + 8, textColor, false);
+            context.drawText(this.textRenderer, Text.literal("宽(Z 区块)"), rightColX + 8, row1 + 8, textColor, false);
             context.drawText(this.textRenderer, Text.literal("速度模式"), rightColX + 8, row2 + 8, textColor, false);
             context.drawText(this.textRenderer, Text.literal("保留1耐久"), rightColX + 8, row3 + 8, textColor, false);
 
@@ -626,9 +635,6 @@ public class CleanerScreen extends HandledScreen<CleanerScreenHandler> {
         if (speedModeButton != null) {
             speedModeButton.setMessage(Text.literal(handler.getSpeedMode() == CleanerBlockEntity.SPEED_FIXED ? "固定" : "原版"));
         }
-        if (rangeModeButton != null) {
-            rangeModeButton.setMessage(Text.literal(handler.getRangeMode() == CleanerBlockEntity.RANGE_MODE_TOP_LEFT ? "左上角" : "中心"));
-        }
         if (keepDurabilityButton != null) {
             keepDurabilityButton.setMessage(Text.literal(handler.shouldKeepOneDurability() ? "是" : "否"));
         }
@@ -651,11 +657,19 @@ public class CleanerScreen extends HandledScreen<CleanerScreenHandler> {
                 this.setFocused(null);
             }
         }
-        if (rangeInput != null && !rangeInput.isFocused()) {
-            String target = Integer.toString(handler.getRangeChunks());
-            if (!target.equals(rangeInput.getText())) {
+        if (rangeXInput != null && !rangeXInput.isFocused()) {
+            String target = Integer.toString(handler.getRangeChunksX());
+            if (!target.equals(rangeXInput.getText())) {
                 suppressInputCallbacks = true;
-                rangeInput.setText(target);
+                rangeXInput.setText(target);
+                suppressInputCallbacks = false;
+            }
+        }
+        if (rangeZInput != null && !rangeZInput.isFocused()) {
+            String target = Integer.toString(handler.getRangeChunksZ());
+            if (!target.equals(rangeZInput.getText())) {
+                suppressInputCallbacks = true;
+                rangeZInput.setText(target);
                 suppressInputCallbacks = false;
             }
         }
@@ -686,16 +700,21 @@ public class CleanerScreen extends HandledScreen<CleanerScreenHandler> {
             this.client.interactionManager.clickButton(this.handler.syncId, action);
             // Optimistic local refresh for fast repeated +/- clicking.
             if (action == 3 || action == 4) {
-                int range = parseIntOr(rangeInput != null ? rangeInput.getText() : "", handler.getRangeChunks());
-                int step = handler.getRangeMode() == CleanerBlockEntity.RANGE_MODE_CENTER ? 2 : 1;
-                range = (action == 3) ? range + step : range - step;
+                int range = parseIntOr(rangeXInput != null ? rangeXInput.getText() : "", handler.getRangeChunksX());
+                range = (action == 3) ? range + 1 : range - 1;
                 range = Math.max(1, Math.min(99, range));
-                if (handler.getRangeMode() == CleanerBlockEntity.RANGE_MODE_CENTER && range % 2 == 0) {
-                    range = Math.min(99, range + 1);
-                }
-                if (rangeInput != null) {
+                if (rangeXInput != null) {
                     suppressInputCallbacks = true;
-                    rangeInput.setText(Integer.toString(range));
+                    rangeXInput.setText(Integer.toString(range));
+                    suppressInputCallbacks = false;
+                }
+            } else if (action == 15 || action == 16) {
+                int range = parseIntOr(rangeZInput != null ? rangeZInput.getText() : "", handler.getRangeChunksZ());
+                range = (action == 15) ? range + 1 : range - 1;
+                range = Math.max(1, Math.min(99, range));
+                if (rangeZInput != null) {
+                    suppressInputCallbacks = true;
+                    rangeZInput.setText(Integer.toString(range));
                     suppressInputCallbacks = false;
                 }
             } else if (action == 5 || action == 6) {
@@ -715,7 +734,7 @@ public class CleanerScreen extends HandledScreen<CleanerScreenHandler> {
         }
     }
 
-    private void onRangeChanged(String text) {
+    private void onRangeXChanged(String text) {
         if (suppressInputCallbacks) {
             return;
         }
@@ -728,10 +747,25 @@ public class CleanerScreen extends HandledScreen<CleanerScreenHandler> {
         try {
             int value = Integer.parseInt(text);
             value = Math.max(1, Math.min(99, value));
-            if (handler.getRangeMode() == CleanerBlockEntity.RANGE_MODE_CENTER && value % 2 == 0) {
-                value = Math.min(99, value + 1);
-            }
             this.client.interactionManager.clickButton(this.handler.syncId, 1000 + value);
+        } catch (NumberFormatException ignored) {
+        }
+    }
+
+    private void onRangeZChanged(String text) {
+        if (suppressInputCallbacks) {
+            return;
+        }
+        if (this.client == null || this.client.interactionManager == null) {
+            return;
+        }
+        if (text == null || text.isBlank()) {
+            return;
+        }
+        try {
+            int value = Integer.parseInt(text);
+            value = Math.max(1, Math.min(99, value));
+            this.client.interactionManager.clickButton(this.handler.syncId, 1100 + value);
         } catch (NumberFormatException ignored) {
         }
     }

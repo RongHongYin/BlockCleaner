@@ -35,8 +35,6 @@ public class CleanerBlockEntity extends BlockEntity implements NamedScreenHandle
     public static final int MODE_SURVIVAL = 1;
     public static final int DIR_UP = 0;
     public static final int DIR_DOWN = 1;
-    public static final int RANGE_MODE_CENTER = 0;
-    public static final int RANGE_MODE_TOP_LEFT = 1;
     public static final int SPEED_FIXED = 0;
     public static final int SPEED_VANILLA = 1;
     public static final int ACTION_ADD_BLACKLIST_BASE = 400000;
@@ -54,8 +52,10 @@ public class CleanerBlockEntity extends BlockEntity implements NamedScreenHandle
 
     private int mode = MODE_SURVIVAL;
     private int direction = DIR_DOWN;
-    private int rangeMode = RANGE_MODE_CENTER;
-    private int rangeChunks = 1;
+    /** Chunk extent along +X from the machine chunk (长). */
+    private int rangeChunksX = 1;
+    /** Chunk extent along +Z from the machine chunk (宽). */
+    private int rangeChunksZ = 1;
     private int targetY = 0;
     private int speedPerSecond = 30;
     private int speedMode = SPEED_FIXED;
@@ -82,13 +82,13 @@ public class CleanerBlockEntity extends BlockEntity implements NamedScreenHandle
             return switch (index) {
                 case 0 -> mode;
                 case 1 -> direction;
-                case 2 -> rangeChunks;
+                case 2 -> rangeChunksX;
                 case 3 -> targetY;
                 case 4 -> speedPerSecond;
                 case 5 -> active ? 1 : 0;
                 case 6 -> speedMode;
                 case 7 -> keepOneDurability ? 1 : 0;
-                case 8 -> rangeMode;
+                case 8 -> rangeChunksZ;
                 case 9 -> buildWithClear ? 1 : 0;
                 case 10 -> buildActive ? 1 : 0;
                 case 11, 12, 13, 14, 15, 16 -> buildFaceEnabled[index - 11] ? 1 : 0;
@@ -104,13 +104,13 @@ public class CleanerBlockEntity extends BlockEntity implements NamedScreenHandle
             switch (index) {
                 case 0 -> mode = value;
                 case 1 -> direction = value;
-                case 2 -> rangeChunks = value;
+                case 2 -> rangeChunksX = normalizeRangeAxis(value);
                 case 3 -> targetY = value;
                 case 4 -> speedPerSecond = value;
                 case 5 -> active = value == 1;
                 case 6 -> speedMode = value;
                 case 7 -> keepOneDurability = value == 1;
-                case 8 -> rangeMode = value == RANGE_MODE_TOP_LEFT ? RANGE_MODE_TOP_LEFT : RANGE_MODE_CENTER;
+                case 8 -> rangeChunksZ = normalizeRangeAxis(value);
                 case 9 -> buildWithClear = value == 1;
                 case 10 -> buildActive = value == 1;
                 case 11, 12, 13, 14, 15, 16 -> buildFaceEnabled[index - 11] = value == 1;
@@ -148,8 +148,8 @@ public class CleanerBlockEntity extends BlockEntity implements NamedScreenHandle
         super.writeData(view);
         view.putInt("mode", mode);
         view.putInt("direction", direction);
-        view.putInt("rangeMode", rangeMode);
-        view.putInt("rangeChunks", rangeChunks);
+        view.putInt("rangeChunksX", rangeChunksX);
+        view.putInt("rangeChunksZ", rangeChunksZ);
         view.putInt("targetY", targetY);
         view.putInt("speedPerSecond", speedPerSecond);
         view.putInt("speedMode", speedMode);
@@ -170,11 +170,9 @@ public class CleanerBlockEntity extends BlockEntity implements NamedScreenHandle
         super.readData(view);
         mode = view.getInt("mode", MODE_SURVIVAL);
         direction = view.getInt("direction", DIR_DOWN);
-        rangeMode = view.getInt("rangeMode", RANGE_MODE_CENTER);
-        if (rangeMode != RANGE_MODE_TOP_LEFT) {
-            rangeMode = RANGE_MODE_CENTER;
-        }
-        rangeChunks = Math.max(1, view.getInt("rangeChunks", 1));
+        int legacyChunks = Math.max(1, view.getInt("rangeChunks", 1));
+        rangeChunksX = Math.max(1, view.getInt("rangeChunksX", legacyChunks));
+        rangeChunksZ = Math.max(1, view.getInt("rangeChunksZ", legacyChunks));
         targetY = view.getInt("targetY", pos.getY() - 1);
         speedPerSecond = Math.max(1, view.getInt("speedPerSecond", 30));
         speedMode = view.getInt("speedMode", SPEED_FIXED);
@@ -742,22 +740,10 @@ public class CleanerBlockEntity extends BlockEntity implements NamedScreenHandle
         }
         int chunkX = pos.getX() >> 4;
         int chunkZ = pos.getZ() >> 4;
-        int minChunkX;
-        int maxChunkX;
-        int minChunkZ;
-        int maxChunkZ;
-        if (rangeMode == RANGE_MODE_TOP_LEFT) {
-            minChunkX = chunkX;
-            maxChunkX = chunkX + rangeChunks - 1;
-            minChunkZ = chunkZ;
-            maxChunkZ = chunkZ + rangeChunks - 1;
-        } else {
-            int half = (rangeChunks - 1) / 2;
-            minChunkX = chunkX - half;
-            maxChunkX = chunkX + half;
-            minChunkZ = chunkZ - half;
-            maxChunkZ = chunkZ + half;
-        }
+        int minChunkX = chunkX;
+        int maxChunkX = chunkX + rangeChunksX - 1;
+        int minChunkZ = chunkZ;
+        int maxChunkZ = chunkZ + rangeChunksZ - 1;
         int minX = minChunkX << 4;
         int maxX = ((maxChunkX + 1) << 4) - 1;
         int minZ = minChunkZ << 4;
@@ -849,15 +835,16 @@ public class CleanerBlockEntity extends BlockEntity implements NamedScreenHandle
         switch (action) {
             case 1 -> direction = DIR_UP;
             case 2 -> direction = DIR_DOWN;
-            case 3 -> rangeChunks = Math.min(99, rangeChunks + (rangeMode == RANGE_MODE_CENTER ? 2 : 1));
-            case 4 -> rangeChunks = Math.max(1, rangeChunks - (rangeMode == RANGE_MODE_CENTER ? 2 : 1));
+            case 3 -> rangeChunksX = Math.min(99, rangeChunksX + 1);
+            case 4 -> rangeChunksX = Math.max(1, rangeChunksX - 1);
             case 5 -> speedPerSecond = Math.min(10000, speedPerSecond + 10);
             case 6 -> speedPerSecond = Math.max(10, speedPerSecond - 10);
             case 7 -> active = !active;
             case 8 -> mode = (mode == MODE_CREATIVE) ? MODE_SURVIVAL : MODE_CREATIVE;
             case 9 -> speedMode = (speedMode == SPEED_FIXED) ? SPEED_VANILLA : SPEED_FIXED;
             case 10 -> keepOneDurability = !keepOneDurability;
-            case 11 -> rangeMode = (rangeMode == RANGE_MODE_CENTER) ? RANGE_MODE_TOP_LEFT : RANGE_MODE_CENTER;
+            case 15 -> rangeChunksZ = Math.min(99, rangeChunksZ + 1);
+            case 16 -> rangeChunksZ = Math.max(1, rangeChunksZ - 1);
             case 12 -> buildWithClear = !buildWithClear;
             case 13 -> buildActive = !buildActive;
             case 14 -> buildLayerMode = (buildLayerMode == BUILD_LAYER_INNER) ? BUILD_LAYER_OUTER : BUILD_LAYER_INNER;
@@ -883,7 +870,8 @@ public class CleanerBlockEntity extends BlockEntity implements NamedScreenHandle
             }
         }
         speedPerSecond = normalizeSpeed(speedPerSecond);
-        rangeChunks = normalizeRange(rangeChunks);
+        rangeChunksX = normalizeRangeAxis(rangeChunksX);
+        rangeChunksZ = normalizeRangeAxis(rangeChunksZ);
         targetY = normalizeTargetY(targetY);
         markDirty();
 
@@ -947,8 +935,13 @@ public class CleanerBlockEntity extends BlockEntity implements NamedScreenHandle
         serverWorld.getPlayers().forEach(player -> player.sendMessage(text, false));
     }
 
-    public void setRangeChunks(int value) {
-        rangeChunks = normalizeRange(value);
+    public void setRangeChunksX(int value) {
+        rangeChunksX = normalizeRangeAxis(value);
+        markDirty();
+    }
+
+    public void setRangeChunksZ(int value) {
+        rangeChunksZ = normalizeRangeAxis(value);
         markDirty();
     }
 
@@ -962,12 +955,8 @@ public class CleanerBlockEntity extends BlockEntity implements NamedScreenHandle
         markDirty();
     }
 
-    private int normalizeRange(int value) {
-        int clamped = Math.max(1, Math.min(99, value));
-        if (rangeMode == RANGE_MODE_CENTER && clamped % 2 == 0) {
-            clamped = Math.min(99, clamped + 1);
-        }
-        return clamped;
+    private static int normalizeRangeAxis(int value) {
+        return Math.max(1, Math.min(99, value));
     }
 
     private int normalizeSpeed(int value) {
