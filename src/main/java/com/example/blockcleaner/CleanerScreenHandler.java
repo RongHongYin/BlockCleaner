@@ -57,8 +57,24 @@ public class CleanerScreenHandler extends ScreenHandler {
             blockEntity.setTargetY(id - 30000 - 1024);
             return true;
         }
-        if (id >= 2000 && id <= 2000 + CleanerBlockEntity.MAX_SPEED_PER_SECOND) {
-            blockEntity.setSpeedPerSecond(id - 2000);
+        // Must run before the speed branch: 400000/500000/600000/700000/800000+ all lie inside 2000..2000+MAX_SPEED.
+        if (id >= CleanerBlockEntity.ACTION_ADD_BLACKLIST_BASE
+                && id < CleanerBlockEntity.ACTION_REMOVE_BLACKLIST_BASE) {
+            int rawId = id - CleanerBlockEntity.ACTION_ADD_BLACKLIST_BASE;
+            Item item = Registries.ITEM.get(rawId);
+            if (item != null) {
+                blockEntity.addDropBlacklistItem(item);
+                sendBlacklistSyncTo(player);
+            }
+            return true;
+        }
+        if (id >= CleanerBlockEntity.ACTION_REMOVE_BLACKLIST_BASE && id < 600000) {
+            int rawId = id - CleanerBlockEntity.ACTION_REMOVE_BLACKLIST_BASE;
+            Item item = Registries.ITEM.get(rawId);
+            if (item != null) {
+                blockEntity.removeDropBlacklistItem(item);
+                sendBlacklistSyncTo(player);
+            }
             return true;
         }
         if (id >= 600000 && id < 600006) {
@@ -80,23 +96,8 @@ public class CleanerScreenHandler extends ScreenHandler {
             }
             return true;
         }
-        if (id >= CleanerBlockEntity.ACTION_ADD_BLACKLIST_BASE
-                && id < CleanerBlockEntity.ACTION_REMOVE_BLACKLIST_BASE) {
-            int rawId = id - CleanerBlockEntity.ACTION_ADD_BLACKLIST_BASE;
-            Item item = Registries.ITEM.get(rawId);
-            if (item != null) {
-                blockEntity.addDropBlacklistItem(item);
-                sendBlacklistSyncTo(player);
-            }
-            return true;
-        }
-        if (id >= CleanerBlockEntity.ACTION_REMOVE_BLACKLIST_BASE) {
-            int rawId = id - CleanerBlockEntity.ACTION_REMOVE_BLACKLIST_BASE;
-            Item item = Registries.ITEM.get(rawId);
-            if (item != null) {
-                blockEntity.removeDropBlacklistItem(item);
-                sendBlacklistSyncTo(player);
-            }
+        if (id >= 2000 && id <= 2000 + CleanerBlockEntity.MAX_SPEED_PER_SECOND) {
+            blockEntity.setSpeedPerSecond(id - 2000);
             return true;
         }
         blockEntity.applyAction(id);
