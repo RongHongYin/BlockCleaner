@@ -15,6 +15,7 @@ public final class ModNetworking {
 
     public static void registerPayloadTypes() {
         PayloadTypeRegistry.playC2S().register(RequestBlacklistSyncPayload.ID, RequestBlacklistSyncPayload.CODEC);
+        PayloadTypeRegistry.playC2S().register(SetTargetYPayload.ID, SetTargetYPayload.CODEC);
         PayloadTypeRegistry.playS2C().register(SyncBlacklistPayload.ID, SyncBlacklistPayload.CODEC);
     }
 
@@ -28,6 +29,19 @@ public final class ModNetworking {
             }
             sendBlacklistSync(context.player(), screenHandler);
         });
+        ServerPlayNetworking.registerGlobalReceiver(SetTargetYPayload.ID, (payload, context) -> {
+            if (!(context.player().currentScreenHandler instanceof CleanerScreenHandler screenHandler)) {
+                return;
+            }
+            if (screenHandler.syncId != payload.syncId()) {
+                return;
+            }
+            CleanerBlockEntity blockEntity = screenHandler.getBlockEntity();
+            if (blockEntity == null) {
+                return;
+            }
+            blockEntity.setTargetY(payload.targetY());
+        });
     }
 
     public static void sendBlacklistSync(ServerPlayerEntity player, CleanerScreenHandler handler) {
@@ -36,6 +50,21 @@ public final class ModNetworking {
             return;
         }
         ServerPlayNetworking.send(player, new SyncBlacklistPayload(handler.syncId, blockEntity.serializeDropBlacklistForSync()));
+    }
+
+    public record SetTargetYPayload(int syncId, int targetY) implements CustomPayload {
+        public static final CustomPayload.Id<SetTargetYPayload> ID =
+                new CustomPayload.Id<>(Identifier.of(BlockCleanerMod.MOD_ID, "set_target_y"));
+        public static final PacketCodec<RegistryByteBuf, SetTargetYPayload> CODEC =
+                PacketCodec.tuple(
+                        PacketCodecs.VAR_INT, SetTargetYPayload::syncId,
+                        PacketCodecs.VAR_INT, SetTargetYPayload::targetY,
+                        SetTargetYPayload::new);
+
+        @Override
+        public Id<? extends CustomPayload> getId() {
+            return ID;
+        }
     }
 
     public record RequestBlacklistSyncPayload(int syncId) implements CustomPayload {

@@ -74,6 +74,8 @@ public class CleanerScreen extends HandledScreen<CleanerScreenHandler> {
     private boolean draggingRightScrollbar = false;
     private Set<Integer> syncedBlacklistRawIds = new HashSet<>();
     private boolean suppressInputCallbacks = false;
+    /** Last target Y received from the server for the clear page; avoids stomping the text field before sync. */
+    private int lastSyncedClearTargetY = Integer.MIN_VALUE;
     private int clearScrollOffset = 0;
     private final List<ClickableWidget> scrollWidgets = new ArrayList<>();
     private int selectedBuildFace = 0;
@@ -200,9 +202,10 @@ public class CleanerScreen extends HandledScreen<CleanerScreenHandler> {
         this.targetYInput = addScrollable(this.addDrawableChild(new TextFieldWidget(this.textRenderer, valueXLeft, row2, valueW, rowH, Text.literal("目标Y"))));
         this.targetYInput.setMaxLength(6);
         this.targetYInput.setText(Integer.toString(handler.getTargetY()));
+        this.lastSyncedClearTargetY = handler.getTargetY();
         this.targetYInput.setChangedListener(this::onTargetYChanged);
         this.speedInput = addScrollable(this.addDrawableChild(new TextFieldWidget(this.textRenderer, valueXLeft, row3, valueW, rowH, Text.literal("速度"))));
-        this.speedInput.setMaxLength(5);
+        this.speedInput.setMaxLength(7);
         this.speedInput.setText(Integer.toString(handler.getSpeedPerSecond()));
         this.speedInput.setChangedListener(this::onSpeedChanged);
 
@@ -674,10 +677,13 @@ public class CleanerScreen extends HandledScreen<CleanerScreenHandler> {
             }
         }
         if (targetYInput != null && !targetYInput.isFocused()) {
-            String target = Integer.toString(handler.getTargetY());
-            if (!target.equals(targetYInput.getText())) {
+            int serverY = handler.getTargetY();
+            // Only apply when the synced property actually changed (do not compare to field text:
+            // before the server ack, that would revert the user's input on unfocus).
+            if (serverY != lastSyncedClearTargetY) {
+                lastSyncedClearTargetY = serverY;
                 suppressInputCallbacks = true;
-                targetYInput.setText(target);
+                targetYInput.setText(Integer.toString(serverY));
                 suppressInputCallbacks = false;
             }
         }
@@ -720,7 +726,7 @@ public class CleanerScreen extends HandledScreen<CleanerScreenHandler> {
             } else if (action == 5 || action == 6) {
                 int speed = parseIntOr(speedInput != null ? speedInput.getText() : "", handler.getSpeedPerSecond());
                 speed = (action == 5) ? speed + 10 : speed - 10;
-                speed = Math.max(10, Math.min(10000, speed));
+                speed = Math.max(CleanerBlockEntity.MIN_SPEED_PER_SECOND, Math.min(CleanerBlockEntity.MAX_SPEED_PER_SECOND, speed));
                 speed = (speed / 10) * 10;
                 if (speedInput != null) {
                     suppressInputCallbacks = true;
@@ -782,7 +788,7 @@ public class CleanerScreen extends HandledScreen<CleanerScreenHandler> {
         }
         try {
             int value = Integer.parseInt(text);
-            value = Math.max(10, Math.min(10000, value));
+            value = Math.max(CleanerBlockEntity.MIN_SPEED_PER_SECOND, Math.min(CleanerBlockEntity.MAX_SPEED_PER_SECOND, value));
             value = (value / 10) * 10;
             this.client.interactionManager.clickButton(this.handler.syncId, 2000 + value);
         } catch (NumberFormatException ignored) {
@@ -793,16 +799,15 @@ public class CleanerScreen extends HandledScreen<CleanerScreenHandler> {
         if (suppressInputCallbacks) {
             return;
         }
-        if (this.client == null || this.client.interactionManager == null) {
+        if (this.client == null) {
             return;
         }
         if (text == null || text.isBlank()) {
             return;
         }
         try {
-            int value = Integer.parseInt(text);
-            value = Math.max(-1024, Math.min(3072, value));
-            this.client.interactionManager.clickButton(this.handler.syncId, 30000 + value + 1024);
+            int value = Integer.parseInt(text.trim());
+            ClientPlayNetworking.send(new ModNetworking.SetTargetYPayload(this.handler.syncId, value));
         } catch (NumberFormatException ignored) {
         }
     }

@@ -19,7 +19,7 @@ public class CleanerScreenHandler extends ScreenHandler {
     private Set<Integer> syncedBlacklistRawIds = new HashSet<>();
 
     public CleanerScreenHandler(int syncId, PlayerInventory inventory) {
-        this(syncId, inventory, null, new ArrayPropertyDelegate(30));
+        this(syncId, inventory, null, new ArrayPropertyDelegate(31));
     }
 
     public CleanerScreenHandler(int syncId, PlayerInventory inventory, CleanerBlockEntity blockEntity, PropertyDelegate properties) {
@@ -52,12 +52,13 @@ public class CleanerScreenHandler extends ScreenHandler {
             blockEntity.setRangeChunksZ(id - 1100);
             return true;
         }
-        if (id >= 2000 && id <= 12000) {
-            blockEntity.setSpeedPerSecond(id - 2000);
-            return true;
-        }
+        // Must run before the speed branch: target-Y ids (30000..34096) also lie inside 2000..2000+MAX_SPEED.
         if (id >= 30000 && id <= 34096) {
             blockEntity.setTargetY(id - 30000 - 1024);
+            return true;
+        }
+        if (id >= 2000 && id <= 2000 + CleanerBlockEntity.MAX_SPEED_PER_SECOND) {
+            blockEntity.setSpeedPerSecond(id - 2000);
             return true;
         }
         if (id >= 600000 && id < 600006) {
@@ -119,7 +120,7 @@ public class CleanerScreenHandler extends ScreenHandler {
     }
 
     public int getSpeedPerSecond() {
-        return properties.get(4);
+        return CleanerBlockEntity.combineSpeedPropertyParts(properties.get(4), properties.get(30));
     }
 
     public boolean isActive() {

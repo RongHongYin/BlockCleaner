@@ -37,6 +37,10 @@ public class CleanerBlockEntity extends BlockEntity implements NamedScreenHandle
     public static final int DIR_DOWN = 1;
     public static final int SPEED_FIXED = 0;
     public static final int SPEED_VANILLA = 1;
+    /** Minimum fixed-mode speed (blocks/sec), also used for +/- button steps alignment. */
+    public static final int MIN_SPEED_PER_SECOND = 10;
+    /** Maximum fixed-mode speed (blocks/sec). */
+    public static final int MAX_SPEED_PER_SECOND = 9_999_999;
     public static final int ACTION_ADD_BLACKLIST_BASE = 400000;
     public static final int ACTION_REMOVE_BLACKLIST_BASE = 500000;
     public static final int ACTION_SET_BUILD_FACE_BLOCK_BASE = 800000;
@@ -76,6 +80,19 @@ public class CleanerBlockEntity extends BlockEntity implements NamedScreenHandle
     private int cursorZ;
     private boolean cursorInitialized = false;
 
+    /**
+     * {@link net.minecraft.screen.ScreenHandler} only syncs each property as a signed 16-bit value to the client.
+     * Speeds above 32767 must be split across two indices (15 bits each, 0x7fff per part).
+     */
+    private static final int SPEED_SYNC_MASK = 0x7fff;
+    private static final int PROPERTY_SPEED_LO = 4;
+    private static final int PROPERTY_SPEED_HI = 30;
+
+    /** Client-side: re-merge {@link #PROPERTY_SPEED_LO} and {@link #PROPERTY_SPEED_HI} after 16-bit GUI sync. */
+    public static int combineSpeedPropertyParts(int lo, int hi) {
+        return (lo & SPEED_SYNC_MASK) | ((hi & SPEED_SYNC_MASK) << 15);
+    }
+
     private final PropertyDelegate properties = new PropertyDelegate() {
         @Override
         public int get(int index) {
@@ -84,7 +101,7 @@ public class CleanerBlockEntity extends BlockEntity implements NamedScreenHandle
                 case 1 -> direction;
                 case 2 -> rangeChunksX;
                 case 3 -> targetY;
-                case 4 -> speedPerSecond;
+                case PROPERTY_SPEED_LO -> speedPerSecond & SPEED_SYNC_MASK;
                 case 5 -> active ? 1 : 0;
                 case 6 -> speedMode;
                 case 7 -> keepOneDurability ? 1 : 0;
@@ -95,6 +112,7 @@ public class CleanerBlockEntity extends BlockEntity implements NamedScreenHandle
                 case 17, 18, 19, 20, 21, 22 -> buildFaceUseSpecific[index - 17] ? 1 : 0;
                 case 23, 24, 25, 26, 27, 28 -> buildFaceSpecificRawIds[index - 23];
                 case 29 -> buildLayerMode;
+                case PROPERTY_SPEED_HI -> (speedPerSecond >>> 15) & SPEED_SYNC_MASK;
                 default -> 0;
             };
         }
@@ -106,7 +124,8 @@ public class CleanerBlockEntity extends BlockEntity implements NamedScreenHandle
                 case 1 -> direction = value;
                 case 2 -> rangeChunksX = normalizeRangeAxis(value);
                 case 3 -> targetY = value;
-                case 4 -> speedPerSecond = value;
+                case PROPERTY_SPEED_LO ->
+                        speedPerSecond = (speedPerSecond & ~(SPEED_SYNC_MASK)) | (value & SPEED_SYNC_MASK);
                 case 5 -> active = value == 1;
                 case 6 -> speedMode = value;
                 case 7 -> keepOneDurability = value == 1;
@@ -117,6 +136,8 @@ public class CleanerBlockEntity extends BlockEntity implements NamedScreenHandle
                 case 17, 18, 19, 20, 21, 22 -> buildFaceUseSpecific[index - 17] = value == 1;
                 case 23, 24, 25, 26, 27, 28 -> buildFaceSpecificRawIds[index - 23] = value >= 0 ? value : -1;
                 case 29 -> buildLayerMode = value == BUILD_LAYER_OUTER ? BUILD_LAYER_OUTER : BUILD_LAYER_INNER;
+                case PROPERTY_SPEED_HI ->
+                        speedPerSecond = (speedPerSecond & ~(SPEED_SYNC_MASK << 15)) | ((value & SPEED_SYNC_MASK) << 15);
                 default -> {
                 }
             }
@@ -124,7 +145,7 @@ public class CleanerBlockEntity extends BlockEntity implements NamedScreenHandle
 
         @Override
         public int size() {
-            return 30;
+            return 31;
         }
     };
 
@@ -308,6 +329,10 @@ public class CleanerBlockEntity extends BlockEntity implements NamedScreenHandle
     }
 
     private boolean placeBuildBlock(BlockPos placePos, int face) {
+        if (mode == MODE_CREATIVE) {
+            BlockState placeState = creativeBuildStateForFace(face);
+            return world.setBlockState(placePos, placeState, Block.NOTIFY_ALL);
+        }
         List<Inventory> inventories = collectSideInventories(true);
         if (inventories.isEmpty()) {
             return false;
@@ -339,6 +364,26 @@ public class CleanerBlockEntity extends BlockEntity implements NamedScreenHandle
             }
         }
         return false;
+    }
+
+    /**
+     * Creative build: no items consumed. If the face is not in specific-block mode,
+     * or the chosen id is missing/invalid, uses white concrete.
+     */
+    private BlockState creativeBuildStateForFace(int face) {
+        if (buildFaceUseSpecific[face]) {
+            int rawId = buildFaceSpecificRawIds[face];
+            if (rawId >= 0) {
+                Item item = Registries.ITEM.get(rawId);
+                if (item instanceof BlockItem blockItem) {
+                    BlockState placeState = blockItem.getBlock().getDefaultState();
+                    if (!placeState.isAir() && placeState.getFluidState().isEmpty()) {
+                        return placeState;
+                    }
+                }
+            }
+        }
+        return Blocks.WHITE_CONCRETE.getDefaultState();
     }
 
     private boolean isOnBoundaryFace(BlockPos posToCheck, Direction faceDir, ScanBounds bounds) {
@@ -418,12 +463,16 @@ public class CleanerBlockEntity extends BlockEntity implements NamedScreenHandle
             }
             // Keep the placed block in place to prevent nearby fluid from immediately flowing back.
             return true;
-        } else if (state.getHardness(world, targetPos) < 0) {
+        } else if (mode == MODE_SURVIVAL && state.getHardness(world, targetPos) < 0) {
             return false;
         }
 
         if (mode == MODE_CREATIVE) {
-            return world.breakBlock(targetPos, false);
+            if (world.breakBlock(targetPos, false)) {
+                return true;
+            }
+            // Unbreakable by normal rules (e.g. end portal frame): remove like creative-mode player edit.
+            return world.setBlockState(targetPos, Blocks.AIR.getDefaultState(), Block.NOTIFY_ALL);
         }
 
         ItemStack tool = findAndUseToolFor(state, serverWorld);
@@ -693,15 +742,19 @@ public class CleanerBlockEntity extends BlockEntity implements NamedScreenHandle
         if (targetPos.equals(this.pos)) {
             return true;
         }
-        // Mandatory safety filters in v2.
-        return state.getBlock() == Blocks.BEDROCK
+        // Mandatory safety filters (both modes).
+        if (state.getBlock() == Blocks.BEDROCK
                 || state.getBlock() == Blocks.BARRIER
                 || state.getBlock() == Blocks.COMMAND_BLOCK
                 || state.getBlock() == Blocks.CHAIN_COMMAND_BLOCK
                 || state.getBlock() == Blocks.REPEATING_COMMAND_BLOCK
                 || state.getBlock() == Blocks.STRUCTURE_BLOCK
-                || state.getBlock() == Blocks.JIGSAW
-                || world.getBlockEntity(targetPos) != null;
+                || state.getBlock() == Blocks.JIGSAW) {
+            return true;
+        }
+        // Survival: skip blocks with block entities (chests, spawners, etc.) — tools/drops path cannot handle them.
+        // Creative: allow removing any such block (instant clear, no drops).
+        return mode == MODE_SURVIVAL && world.getBlockEntity(targetPos) != null;
     }
 
     private BlockPos nextTargetPos() {
@@ -837,8 +890,8 @@ public class CleanerBlockEntity extends BlockEntity implements NamedScreenHandle
             case 2 -> direction = DIR_DOWN;
             case 3 -> rangeChunksX = Math.min(99, rangeChunksX + 1);
             case 4 -> rangeChunksX = Math.max(1, rangeChunksX - 1);
-            case 5 -> speedPerSecond = Math.min(10000, speedPerSecond + 10);
-            case 6 -> speedPerSecond = Math.max(10, speedPerSecond - 10);
+            case 5 -> speedPerSecond = Math.min(MAX_SPEED_PER_SECOND, speedPerSecond + 10);
+            case 6 -> speedPerSecond = Math.max(MIN_SPEED_PER_SECOND, speedPerSecond - 10);
             case 7 -> active = !active;
             case 8 -> mode = (mode == MODE_CREATIVE) ? MODE_SURVIVAL : MODE_CREATIVE;
             case 9 -> speedMode = (speedMode == SPEED_FIXED) ? SPEED_VANILLA : SPEED_FIXED;
@@ -960,9 +1013,9 @@ public class CleanerBlockEntity extends BlockEntity implements NamedScreenHandle
     }
 
     private int normalizeSpeed(int value) {
-        int clamped = Math.max(10, Math.min(10000, value));
+        int clamped = Math.max(MIN_SPEED_PER_SECOND, Math.min(MAX_SPEED_PER_SECOND, value));
         int normalized = (clamped / 10) * 10;
-        return Math.max(10, normalized);
+        return Math.max(MIN_SPEED_PER_SECOND, normalized);
     }
 
     private int normalizeTargetY(int value) {
